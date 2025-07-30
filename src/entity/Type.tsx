@@ -1,8 +1,7 @@
+import { CanvasWindow } from "../CircleCanvas";
 import Component, { ComponentDefine } from "./Component";
 
 export default class Type implements Omit<TypeDefine, 'extend'> {
-
-    private _model: ModelDefine;
 
     type: string = "unknown";
     extend?: Type;
@@ -11,7 +10,6 @@ export default class Type implements Omit<TypeDefine, 'extend'> {
     constructor({ type, model }: TypeDefine) {
         let _this = this;
         this.type = type;
-        this._model = model;
         this.model = {
             ...model,
             init(el) {
@@ -27,6 +25,10 @@ export default class Type implements Omit<TypeDefine, 'extend'> {
             },
         }
     }
+
+    init(win: CanvasWindow) {
+        
+    }
 }
 
 export type ModelDefine = {
@@ -35,7 +37,7 @@ export type ModelDefine = {
         tagName: string;
         attribute?: {},
         editable?: boolean;
-        traits?: []
+        traits?: [];
     },
     init?: (this: { model: ModelDefine, component: Component }, el: JQuery|null) => void;
     [key: string]: any;
@@ -44,13 +46,5 @@ export type ModelDefine = {
 export type TypeDefine = {
     type: string;
     extend?: string;
-    model: ModelDefine,
-    view?: InstanceView;
-}
-
-
-class InstanceView {
-
-
-
+    model: ModelDefine;
 }

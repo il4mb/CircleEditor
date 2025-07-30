@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import Type, { TypeDefine } from '../entity/Type';
-import Component from '../entity/Component';
+import { useCircle } from '../CircleEditorProvider';
 
 interface InstancesProviderState {
     types: Type[];
@@ -15,14 +15,13 @@ type InstancesProviderProps = {
 };
 
 export const TypesProvider = ({ children }: InstancesProviderProps) => {
+
+    const editor = useCircle();
     const typesRef = useRef<Map<string, Type>>(new Map());
     const [types, setTypes] = useState<Type[]>([]);
 
-    const findInstance = (component: Component) => {
-        return false; //types.find(type => type.isInstance(component));
-    };
-
     useEffect(() => {
+        if(!editor.Canvas) return;
         BASE_INSTANCES.forEach((t) => {
             if (!typesRef.current.has(t.type)) {
                 const type = new Type(t);
@@ -33,10 +32,8 @@ export const TypesProvider = ({ children }: InstancesProviderProps) => {
                 typesRef.current.set(t.type, type);
             }
         });
-
-        // ✅ Convert Map to array for useState
         setTypes(Array.from(typesRef.current.values()));
-    }, []);
+    }, [editor.Canvas]);
 
     return (
         <InstancesProviderContext.Provider value={{ types }}>
@@ -49,7 +46,7 @@ export const useTypes = () => {
     const context = useContext(InstancesProviderContext);
     if (!context) throw new Error('useTypes must be used within a TypesProvider');
     return context;
-};
+}
 
 // Dummy instance types
 const BASE_INSTANCES: TypeDefine[] = [

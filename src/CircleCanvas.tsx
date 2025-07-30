@@ -15,20 +15,23 @@ export interface CanvasWindow extends Window {
 }
 
 
-export interface ICanvasRef {
+export interface ICanvas {
+    window?: CanvasWindow;
+    document?: CanvasWindow['document'];
     rect: ICanvasRect;
     render: () => void;
     clear: () => void;
     reload: () => void;
 }
 
-export interface ICanvasProps { }
+export interface ICanvasProps { 
+    onReady?: (canvas: ICanvas) => void;
+}
 
-const CircleCanvas = forwardRef<ICanvasRef, ICanvasProps>(({ }, ref) => {
+const CircleCanvas = forwardRef<ICanvas, ICanvasProps>(({ onReady }, ref) => {
 
-    const mountedRef = useRef(false);
     const iframeRef = useRef<HTMLIFrameElement>(null);
-    const winRef = useRef<CanvasWindow>(null);
+    const [win, setWin] = useState<CanvasWindow>();
     const { components } = useComponents();
     const { types } = useTypes();
     const [rect, setRect] = useState<IRect>({ x: 0, y: 0, width: 0, height: 0 });
@@ -36,6 +39,8 @@ const CircleCanvas = forwardRef<ICanvasRef, ICanvasProps>(({ }, ref) => {
     const [scrollLeft, setScrollLeft] = useState(0);
     const [device, setDevice] = useState<IDevice>();
     const { active, getDeviceByName } = useDevicesManager();
+
+
 
 
     const renderComponent = (component: Component, win: CanvasWindow): JQuery<HTMLElement> => {
@@ -71,7 +76,6 @@ const CircleCanvas = forwardRef<ICanvasRef, ICanvasProps>(({ }, ref) => {
     };
 
     const render = () => {
-        const win = winRef.current;
         if (!win || !win.$) return;
         components.forEach(component => {
             const el = renderComponent(component, win);
@@ -89,6 +93,23 @@ const CircleCanvas = forwardRef<ICanvasRef, ICanvasProps>(({ }, ref) => {
         render();
     };
 
+
+    const instance = useMemo<ICanvas>(() => ({
+        window: win,
+        document: win?.document,
+        rect: {
+            y: rect.y,
+            x: rect.y,
+            width: rect.width,
+            height: rect.height,
+            scrollLeft,
+            scrollTop
+        },
+        render,
+        clear,
+        reload,
+    }), [components, types, win, rect, scrollTop, scrollLeft, render, clear, reload]);
+
     const updateDataRect = () => {
         const iframe = iframeRef.current;
         if (!iframe) return;
@@ -103,52 +124,12 @@ const CircleCanvas = forwardRef<ICanvasRef, ICanvasProps>(({ }, ref) => {
 
     const observe = useMemo(() => new ResizeObserver(updateDataRect), []);
 
-    // UNMOUNT 
+    // ON WIN READY 
     useEffect(() => {
-        const win = winRef.current;
-        return () => {
-            win?.removeEventListener('scroll', updateDataRect);
-            observe.disconnect();
-        }
-    }, []);
-
-    // CANVAS IFRAME MOUNTING
-    useEffect(() => {
-        if (!iframeRef.current || mountedRef.current) return;
-        const iframe = iframeRef.current;
-        const win = iframe.contentWindow;
         if (!win) return;
-
-        try {
-            // @ts-ignore
-            win.eval(jquery);
-        } catch (err) {
-            console.error('❌ Injection via eval failed:', err);
-        }
-
+        
         updateDataRect();
-        win.addEventListener('scroll', updateDataRect);
-        observe.observe(win.document.body);
-        mountedRef.current = true;
-        winRef.current = win as any;
 
-    }, [iframeRef.current, components, types.map(e => e.type)]);
-
-
-    // CANVAS SIZE SYNC
-    useEffect(() => {
-        const activeDevice = getDeviceByName(active);
-        if (activeDevice) {
-            setDevice(activeDevice);
-        }
-    }, [active]);
-
-
-    // COMPONENT SYNC & CORE STYLE
-    useEffect(() => {
-        if (!winRef.current) return;
-        const win = winRef.current;
-        if (!win) return;
         let style: HTMLStyleElement | null = null;
         const doc = win.document;
         if (win && doc && 'adoptedStyleSheets' in doc) {
@@ -164,26 +145,52 @@ const CircleCanvas = forwardRef<ICanvasRef, ICanvasProps>(({ }, ref) => {
             doc.head.appendChild(style);
         }
 
-        render();
+        win.addEventListener('scroll', updateDataRect);
+        observe.observe(win.document.body);
+
+        onReady?.(instance);
+
         return () => {
             style?.remove();
+            win?.removeEventListener('scroll', updateDataRect);
+            observe.disconnect();
         }
+    }, [win]);
+
+    // CANVAS IFRAME MOUNTING
+    useEffect(() => {
+        if (!iframeRef.current || win) return;
+        const iframe = iframeRef.current;
+        const _win = iframe.contentWindow;
+        if (!_win) return;
+
+        try {
+            // @ts-ignore
+            _win.eval(jquery);
+        } catch (err) {
+            console.error('❌ Injection via eval failed:', err);
+        }
+
+        setWin(_win as any);
+
+    }, [win, iframeRef]);
+
+
+    // CANVAS SIZE SYNC
+    useEffect(() => {
+        const activeDevice = getDeviceByName(active);
+        if (activeDevice) {
+            setDevice(activeDevice);
+        }
+    }, [active]);
+
+
+    // COMPONENT SYNC & CORE STYLE
+    useEffect(() => {
+        render();
     }, [components, types.map(t => t.type)]);
 
-
-    useImperativeHandle(ref, () => ({
-        rect: {
-            y: rect.y,
-            x: rect.y,
-            width: rect.width,
-            height: rect.height,
-            scrollLeft,
-            scrollTop
-        },
-        render,
-        clear,
-        reload,
-    }));
+    useImperativeHandle(ref, () => instance);
 
     return (
         <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, bgcolor: 'background.paper', overflow: 'hidden' }}>

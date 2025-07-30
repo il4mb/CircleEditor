@@ -4,6 +4,7 @@ import { createContext, useContext, useState, ReactNode, useEffect, Dispatch, Se
 import Component, { ComponentDefine } from '../entity/Component';
 import { isEqual } from 'lodash';
 import { useTypes } from './TypesProvider';
+import { useCircle } from '../CircleEditorProvider';
 
 interface ComponentsProviderState {
     components: Component[];
@@ -20,11 +21,12 @@ type ComponentsProviderProvider = {
 
 export const ComponentsProvider = ({ children, components: defineComponents }: ComponentsProviderProvider) => {
 
+    const { Canvas } = useCircle();
     const { types } = useTypes();
     const [components, setComponents] = useState<Component[]>([]);
 
-
     useEffect(() => {
+        if (!Canvas) return;
         setComponents(prev => {
             const newComponents = defineComponents.map<Component>((define: any) => {
                 if (!(define as any).id) {
@@ -35,7 +37,7 @@ export const ComponentsProvider = ({ children, components: defineComponents }: C
             if (isEqual(prev, newComponents)) return prev;
             return newComponents;
         })
-    }, [defineComponents]);
+    }, [defineComponents, Canvas]);
 
 
 

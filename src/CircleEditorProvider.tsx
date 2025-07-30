@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, ReactNode, RefObject, useMemo, useEffect } from 'react';
 import { ComponentsProvider } from './contexts/ComponentsProvider';
 import Component from './entity/Component';
 import { TypesProvider } from './contexts/TypesProvider';
@@ -6,25 +6,33 @@ import { CanvasProvider } from './contexts/CanvasProvider';
 import { StylesProvider } from './contexts/StylesProvider';
 import { DevicesProvider } from './contexts/DevicesProvider';
 import AppTheme from './theme/AppTheme';
+import { ICanvas } from './CircleCanvas';
 
-interface CircleEditorState {
-    Canvas: any;
-
+interface CircleEditor {
+    Canvas: ICanvas | null;
 }
 
-const CircleEditorProviderContext = createContext<CircleEditorState | undefined>(undefined);
+const CircleEditorProviderContext = createContext<CircleEditor | undefined>(undefined);
 
 type CircleEditorProviderProps = {
     children?: ReactNode;
     components?: Component[];
+    canvas: ICanvas | null;
 }
-export const CircleEditorProvider = ({ children, components }: CircleEditorProviderProps) => {
+export const CircleEditorProvider = ({ children, components, canvas }: CircleEditorProviderProps) => {
 
-    const [state, setstate] = useState<any>();
+
+    useEffect(() => {
+        console.log(canvas)
+    }, [canvas])
+
+    const valueState = useMemo<CircleEditor>(() => ({
+        Canvas: canvas
+    }), [canvas?.document, canvas?.window]);
 
     return (
         <AppTheme>
-            <CircleEditorProviderContext.Provider value={{ state, setstate }}>
+            <CircleEditorProviderContext.Provider value={valueState}>
                 <TypesProvider>
                     <ComponentsProvider components={components || []}>
                         <DevicesProvider>
@@ -42,7 +50,7 @@ export const CircleEditorProvider = ({ children, components }: CircleEditorProvi
     );
 };
 
-export const useCircleEditor = () => {
+export const useCircle = () => {
     const context = useContext(CircleEditorProviderContext);
     if (!context) throw new Error('useCircleEditorProvider must be used within a CircleEditorProviderProvider');
     return context;
