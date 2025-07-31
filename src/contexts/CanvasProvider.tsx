@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { IRect } from '../type';
 
 export interface CanvasWindow extends Window {
@@ -29,6 +29,7 @@ type CanvasProviderProps = {
 };
 
 export const CanvasProvider = ({ children }: CanvasProviderProps) => {
+
     const [frame, setFrame] = useState<HTMLIFrameElement>();
     const [win, setWin] = useState<CanvasWindow>();
     const [scrollTop, setScrollTop] = useState(0);

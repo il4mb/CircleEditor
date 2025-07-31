@@ -42,7 +42,7 @@ export default function CircleCanvas() {
 
     // CANVAS IFRAME MOUNTING
     useEffect(() => {
-        if (!frame || window) return;
+        if (!frame) return;
         const _win = frame.contentWindow?.window;
         if (!_win) return;
 

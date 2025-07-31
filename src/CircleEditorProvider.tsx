@@ -8,6 +8,7 @@ import { DevicesProvider } from './contexts/DevicesProvider';
 import AppTheme from './theme/AppTheme';
 import { NodesProvider } from './contexts/NodesProvider';
 import { OverlayProvider } from './contexts/OverlayProvider';
+import { SelectedProvider } from './contexts/SelectedProvider';
 
 type CircleEditorProviderProps = {
     children?: ReactNode;
@@ -23,13 +24,15 @@ export const CircleEditorRegister = ({ children, components, onComponentsChange 
                         components={components || []}
                         onComponentsChange={onComponentsChange}>
                         <NodesProvider>
-                            <DevicesProvider>
-                                <OverlayProvider>
-                                    <StylesProvider>
-                                        {children}
-                                    </StylesProvider>
-                                </OverlayProvider>
-                            </DevicesProvider>
+                            <SelectedProvider>
+                                <DevicesProvider>
+                                    <OverlayProvider>
+                                        <StylesProvider>
+                                            {children}
+                                        </StylesProvider>
+                                    </OverlayProvider>
+                                </DevicesProvider>
+                            </SelectedProvider>
                         </NodesProvider>
                     </ComponentsProvider>
                 </TypesProvider>

@@ -1,4 +1,12 @@
-import { createContext, useContext, useRef, useState, ReactNode, useEffect, useMemo } from 'react';
+import {
+    createContext,
+    useContext,
+    useRef,
+    useState,
+    ReactNode,
+    useEffect,
+    useMemo,
+} from 'react';
 import { useComponents } from './ComponentsProvider';
 import { useTypes } from './TypesProvider';
 import Component from '../entity/Component';
@@ -20,20 +28,28 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
     const { window } = useCanvas();
     const components = useComponents();
     const types = useTypes();
+
+    const [mounted, setMounted] = useState(false);
     const elementMapRef = useRef<Map<string, JQuery>>(new Map());
     const [elements, setElements] = useState<JQuery<HTMLElement>[]>([]);
-
-    const getNodeById = useMemo(() => (id: string) => {
-        return elementMapRef.current.get(id);
-    }, [elements.map(e => e)]);
+    const getNodeById = useMemo(() => (id: string) => elementMapRef.current.get(id), []);
 
 
     useEffect(() => {
+        setMounted(true);
+        return () => {
+            elementMapRef.current.clear();
+            setElements([]);
+            setMounted(false);
+        }
+    }, [window]);
 
-        if (!window?.$) return;
+
+    // Initial node creation from component tree
+    useEffect(() => {
+        if (!window?.$ || !mounted) return;
         const body = window.document!.body;
         const $ = window.$;
-
         let changed = false;
 
         const buildNode = (component: Component, $parent: JQuery<HTMLElement>): JQuery<HTMLElement> | undefined => {
@@ -43,83 +59,93 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
                 return elementMapRef.current.get(component.id);
             }
 
-            const attributes = component.attributes || {};
             const $el = $(`<${component.tagName || 'div'} id="${component.id}">`);
-            console.log($el, $parent)
-            $el.appendTo($parent[0]);
+            $el.appendTo($parent);
             $el.data('component', component);
-            Object.entries(attributes).forEach(([key, value]) => {
-                $el.attr(key, value as any);
-            });
-            $el.text(component.content || "");
 
-            // Rekursif untuk children
+            // Set attributes
+            const attributes = component.attributes || {};
+            Object.entries(attributes).forEach(([key, value]) =>
+                $el.attr(key, value as any)
+            );
+
+            // Set text content
+            if (component.content) {
+                $el.text(component.content);
+            }
+
+            // Recursive render
             if (Array.isArray(component.components)) {
-                component.components.forEach(child => {
+                component.components.forEach((child) => {
                     const $child = buildNode(child, $el);
                     if ($child) $el.append($child);
                 });
             }
-            elementMapRef.current.set(component.id, $el);
 
+            elementMapRef.current.set(component.id, $el);
             changed = true;
             return $el;
         };
 
-        components.forEach(comp => buildNode(comp, $(body)));
+        // Render root components
+        components.forEach((comp) => buildNode(comp, $(body)));
 
         if (changed) {
             setElements(Array.from(elementMapRef.current.values()));
         }
-    }, [components.map(e => e), window?.$]);
+    }, [components, window, mounted]);
 
 
+    // Apply type definitions and patch tagName
     useEffect(() => {
-
         if (!window?.$) return;
         const $ = window.$;
-        let shouldUpdate = false;
+        let modified = false;
+        const elements = Array.from(elementMapRef.current.values());
+
         for (const $el of elements) {
-            if (!$el) return;
 
-            const component = $el.data("component");
             const element = $el?.get(0);
+            const component = $el?.data('component') as Component;
 
-            if (!component?.id || !component?.type || !element) return;
-            const typeDef = component.type ? types.find(t => t.type === component.type || t.isComponent(element)) : null;
+            if (!component?.id || !element) continue;
+
+            const typeDef = types.find(
+                (t) => t.type === component.type || t.isComponent?.(element)
+            );
 
             if (typeDef) {
+                const expectedTag = typeDef.model.default?.tagName;
+                if (expectedTag && expectedTag.toLowerCase() !== element.tagName.toLowerCase()) {
 
-                const tagName = typeDef?.model.default?.tagName;
-                if (tagName && tagName.toLowerCase() !== element.tagName.toLowerCase()) {
-                    const $new = $(`<${tagName} id="${component.id}">`);
+                    const $new = $(`<${expectedTag} id="${component.id}">`);
                     $.each(element.attributes, (_, attr) => {
                         $new.attr(attr.name, attr.value);
                     });
                     $new.append($el.contents());
+                    $new.data("component", component);
                     $el.replaceWith($new);
                     elementMapRef.current.set(component.id, $new);
                 }
 
                 typeDef.model.init?.();
-                shouldUpdate = true;
+                modified = true;
             }
-
         }
 
-        if (shouldUpdate) {
+        if (modified) {
             setElements(Array.from(elementMapRef.current.values()));
-            console.log("Update")
         }
 
+        return () => {
 
-    }, [components, elements, types.map(e => e)]);
+        }
+    }, [types, window]);
 
-
-    const contextValue = useMemo(() => ({
-        nodes: elements, getNodeById
-    }), [elements, getNodeById])
-
+    const contextValue = useMemo<NodeProviderState>(() => ({
+        nodes: elements,
+        getNodeById,
+    }), [elements]);
 
     return (
         <NodeProviderContext.Provider value={contextValue}>
@@ -128,9 +154,22 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
     );
 };
 
-export const useNodes = () => {
+// Overloads
+export function useNodes(): NodeProviderState;
+export function useNodes(id: string): JQuery<HTMLElement> | undefined;
+export function useNodes(ids: string[]): JQuery<HTMLElement>[];
+export function useNodes(id?: any): any {
     const context = useContext(NodeProviderContext);
-    if (!context)
+    if (!context) {
         throw new Error('useNodes must be used within a NodesProvider');
+    }
+
+    if (id) {
+        if (Array.isArray(id)) {
+            return context.nodes.filter($el => id.includes($el.attr("id") || ''));
+        }
+        return context.nodes.find($el => $el.attr("id") == id);
+    }
+
     return context;
 };

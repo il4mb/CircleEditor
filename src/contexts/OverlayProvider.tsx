@@ -1,10 +1,11 @@
-import { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { useNodes } from './NodesProvider';
-import { useComponents } from './ComponentsProvider';
 import { Box } from '@mui/material';
 import { useCanvas } from './CanvasProvider';
 import { getColor } from '../theme/colors';
 import { motion } from "framer-motion";
+import { isEqual } from 'lodash';
+import { useSelectedProvider } from './SelectedProvider';
 
 interface OverlayProviderState {
 
@@ -17,12 +18,14 @@ type OverlayProviderProps = {
 }
 export const OverlayProvider = ({ children }: OverlayProviderProps) => {
 
-    const components = useComponents();
+    const selected = useSelectedProvider();
+    const selectedNodes = useNodes(selected.map(e => e.id!));
+    const selectedRects = selectedNodes.map(e => e[0].getBoundingClientRect());
+
     const { nodes } = useNodes();
     const canvas = useCanvas();
     const [mouseXY, setMouseXY] = useState({ x: 0, y: 0 });
     const [rect, setRect] = useState<DOMRect>();
-
 
     useEffect(() => {
 
@@ -31,21 +34,23 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
         return () => {
             canvas.window?.removeEventListener("mousemove", onMouseMove);
         }
-    }, [canvas]);
-
+    }, [canvas.window]);
 
     useEffect(() => {
 
         if (!canvas.window || !canvas.document) return;
         const { x, y } = mouseXY;
         const hover = canvas.document.elementFromPoint(x, y);
-        if (hover && !["html", "body"].includes(hover.tagName.toLowerCase())) {
-            setRect(hover.getBoundingClientRect())
-        } else {
-            setRect(undefined);
-        }
+        setRect(prev => {
 
-    }, [mouseXY, canvas, nodes]);
+            let newRect: DOMRect | undefined = undefined;
+            if (hover && !["html", "body"].includes(hover.tagName.toLowerCase())) {
+                newRect = hover.getBoundingClientRect();
+            }
+            return isEqual(prev, newRect) ? prev : newRect;
+        });
+
+    }, [mouseXY, canvas.window, nodes]);
 
     return (
         <OverlayProviderContext.Provider value={{}}>
@@ -84,6 +89,23 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
                             outlineOffset: '1.5px',
                         }} />
                 )}
+
+                {selectedRects.map((r, i) => (
+                    <Box
+                        key={i}
+                        style={{
+                            position: 'absolute',
+                            outline: '2px solid ' + getColor('primary')[400],
+                            outlineOffset: '1.5px',
+                            zIndex: 999,
+                            top: r.top + 'px',
+                            left: r.left + 'px',
+                            width: (r.width || 0) + 'px',
+                            height: (r.height || 0) + 'px',
+                            opacity: 1,
+                            scale: 1
+                        }} />
+                ))}
             </Box>
         </OverlayProviderContext.Provider>
     );
