@@ -1,59 +1,50 @@
 "use client"
 
-import { createContext, useContext, useState, ReactNode, useEffect, Dispatch, SetStateAction } from 'react';
-import Component, { ComponentDefine } from '../entity/Component';
+import { createContext, useContext, ReactNode, useEffect, useRef } from 'react';
+import Component from '../entity/Component';
+import { nanoid } from 'nanoid';
 import { isEqual } from 'lodash';
-import { useTypes } from './TypesProvider';
-import { useCircle } from '../CircleEditorProvider';
 
-interface ComponentsProviderState {
-    components: Component[];
-    setComponents: Dispatch<SetStateAction<Component[]>>
-}
-
-const ComponentsProviderContext = createContext<ComponentsProviderState | undefined>(undefined);
+const Context = createContext<Component[]>([]);
 
 type ComponentsProviderProvider = {
     children: ReactNode;
-    components: (ComponentDefine | Component)[];
-}
+    components: Component[];
+    onComponentsChange?: (components: Component[]) => void;
+};
+
+export const ComponentsProvider = ({ children, components, onComponentsChange }: ComponentsProviderProvider) => {
+    
+    const previous = useRef<Component[]>([]);
+    const assignId = (components: Component[]): Component[] => components.map((comp) => {
+        if (!comp.id) comp.id = nanoid(components.length + 1);
+        if (comp.components) {
+            comp.components = assignId(comp.components);
+        }
+        return comp;
+    });
 
 
-export const ComponentsProvider = ({ children, components: defineComponents }: ComponentsProviderProvider) => {
+    // Generate IDs if missing
+    const processedComponents = assignId(components);
 
-    const { Canvas } = useCircle();
-    const { types } = useTypes();
-    const [components, setComponents] = useState<Component[]>([]);
-
+    // Only notify when changed
     useEffect(() => {
-        if (!Canvas) return;
-        setComponents(prev => {
-            const newComponents = defineComponents.map<Component>((define: any) => {
-                if (!(define as any).id) {
-                    return new Component(define);
-                }
-                return define;
-            });
-            if (isEqual(prev, newComponents)) return prev;
-            return newComponents;
-        })
-    }, [defineComponents, Canvas]);
-
-
+        if (!isEqual(previous.current, processedComponents)) {
+            previous.current = processedComponents;
+            onComponentsChange?.(processedComponents);
+        }
+    }, [processedComponents, onComponentsChange]);
 
     return (
-        <ComponentsProviderContext.Provider value={{ components, setComponents }}>
+        <Context.Provider value={processedComponents}>
             {children}
-        </ComponentsProviderContext.Provider>
+        </Context.Provider>
     );
-}
-
-
+};
 
 export const useComponents = () => {
-    const context = useContext(ComponentsProviderContext);
-    if (!context) throw new Error('useComponentsProvider must be used within a ComponentsProviderProvider');
+    const context = useContext(Context);
+    if (!context) throw new Error('useComponents must be used within a ComponentsProvider');
     return context;
-}
-
-
+};

@@ -2,13 +2,9 @@
 
 import { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import Type, { TypeDefine } from '../entity/Type';
-import { useCircle } from '../CircleEditorProvider';
+import { useCanvas } from './CanvasProvider';
 
-interface InstancesProviderState {
-    types: Type[];
-}
-
-const InstancesProviderContext = createContext<InstancesProviderState | undefined>(undefined);
+const InstancesProviderContext = createContext<Type[]>([]);
 
 type InstancesProviderProps = {
     children: ReactNode;
@@ -16,12 +12,13 @@ type InstancesProviderProps = {
 
 export const TypesProvider = ({ children }: InstancesProviderProps) => {
 
-    const editor = useCircle();
+    const canvas = useCanvas();
     const typesRef = useRef<Map<string, Type>>(new Map());
     const [types, setTypes] = useState<Type[]>([]);
 
     useEffect(() => {
-        if(!editor.Canvas) return;
+        if (!canvas.window) return;
+
         BASE_INSTANCES.forEach((t) => {
             if (!typesRef.current.has(t.type)) {
                 const type = new Type(t);
@@ -33,10 +30,10 @@ export const TypesProvider = ({ children }: InstancesProviderProps) => {
             }
         });
         setTypes(Array.from(typesRef.current.values()));
-    }, [editor.Canvas]);
+    }, [canvas.window]);
 
     return (
-        <InstancesProviderContext.Provider value={{ types }}>
+        <InstancesProviderContext.Provider value={types}>
             {children}
         </InstancesProviderContext.Provider>
     );
@@ -52,21 +49,16 @@ export const useTypes = () => {
 const BASE_INSTANCES: TypeDefine[] = [
     {
         type: 'text',
+        isComponent: (el) => false,
         model: {
             default: {
                 tagName: 'p',
                 editable: true,
             },
-            init(el) {
-                el?.on('dblclick', () => {
-                    this.model.onDoubleClick(el);
-                });
-                el?.on("blur", () => el.removeAttr('contentEditable'))
+            init() {
+
             },
-            onDoubleClick(el: JQuery) {
-                el.attr("contentEditable", 'true');
-                el.trigger("focus");
-            }
+      
         },
     },
     {
@@ -76,8 +68,8 @@ const BASE_INSTANCES: TypeDefine[] = [
             default: {
                 tagName: 'h1',
             },
-            init(el) {
-                console.log('Mounted heading:', this.component.$el);
+            init() {
+                // console.log('Mounted heading:', this.component.$el);
             },
         },
     },

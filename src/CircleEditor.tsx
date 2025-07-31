@@ -1,34 +1,35 @@
 import { Box, Stack } from '@mui/material';
 import Component from './entity/Component';
-import { CircleEditorProvider } from './CircleEditorProvider';
-import CircleCanvas, { ICanvas } from './CircleCanvas';
+import { CircleEditorRegister } from './CircleEditorProvider';
 import PanelTop from './panels/PanelTop';
 import PanelLeft from './panels/PanelLeft';
 import PanelRight from './panels/PanelRight';
-import { useState } from 'react';
+import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
+import CircleCanvas from './components/CircleCanvas';
 
 export interface IEditorProps {
-    components?: Component[];
+    components: Component[];
+    onComponentsChange: Dispatch<SetStateAction<Component[]>>;
 }
 
-export default function CircleEditor({ components }: IEditorProps) {
-
-    const [canvas, setCanvas] = useState<ICanvas|null>(null);
+export default function CircleEditor({ components, onComponentsChange }: IEditorProps) {
 
     return (
         <Stack direction={"row"} sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}>
-            <CircleEditorProvider components={components} canvas={canvas}>
+            <CircleEditorRegister
+                components={components}
+                onComponentsChange={onComponentsChange}>
                 <Stack direction={"row"} flex={1}>
                     <PanelLeft />
                     <Stack flex={1}>
                         <PanelTop />
                         <Box flex={1} position={"relative"}>
-                            <CircleCanvas onReady={setCanvas}/>
+                            <CircleCanvas />
                         </Box>
                     </Stack>
                     <PanelRight />
                 </Stack>
-            </CircleEditorProvider>
+            </CircleEditorRegister>
         </Stack>
     );
 }
