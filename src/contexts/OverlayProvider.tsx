@@ -1,11 +1,12 @@
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
-import { useNodes } from './NodesProvider';
+import { useNodeComponent, useNodes } from './NodesProvider';
 import { Box } from '@mui/material';
 import { useCanvas } from './CanvasProvider';
 import { getColor } from '../theme/colors';
 import { motion } from "framer-motion";
 import { isEqual } from 'lodash';
 import { useSelected } from './SelectedProvider';
+import { IRect } from '../type';
 
 interface OverlayProviderState {
 
@@ -19,11 +20,13 @@ type OverlayProviderProps = {
 export const OverlayProvider = ({ children }: OverlayProviderProps) => {
 
     const selected = useSelected();
-    const selectedNodes = useNodes(selected.map(e => e.id));
-    const selectedRects = selectedNodes.map(e => e[0].getBoundingClientRect());
-    const isMultipleSelected = selectedRects.length > 1;
+    const nodes = useNodeComponent(selected.map(e => e.id));
+    const selectedRects = nodes.map(n => n.getRect());
 
-    const nodes = useNodes();
+
+    const isMultipleSelected = selected.length > 1;
+
+    //const nodes = useNodes();
     const canvas = useCanvas();
     const [mouseXY, setMouseXY] = useState({ x: 0, y: 0 });
     const [rect, setRect] = useState<DOMRect>();
@@ -36,24 +39,27 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
         }
     }, [canvas.window]);
 
-    useEffect(() => {
-
-        if (!canvas.window || !canvas.document) return;
-        const { x, y } = mouseXY;
-        const hover = canvas.document.elementFromPoint(x, y);
-        setRect(prev => {
-
-            let newRect: DOMRect | undefined = undefined;
-            if (hover && !["html", "body"].includes(hover.tagName.toLowerCase())) {
-                newRect = hover.getBoundingClientRect();
-            }
-            return isEqual(prev, newRect) ? prev : newRect;
-        });
-
-    }, [mouseXY, canvas.window, nodes]);
 
 
-    const renderSelectedBox = (rect: DOMRect, i: number) => (
+    
+    // useEffect(() => {
+
+    //     if (!canvas.window || !canvas.document) return;
+    //     const { x, y } = mouseXY;
+    //     const hover = canvas.document.elementFromPoint(x, y);
+    //     setRect(prev => {
+
+    //         let newRect: DOMRect | undefined = undefined;
+    //         if (hover && !["html", "body"].includes(hover.tagName.toLowerCase())) {
+    //             newRect = hover.getBoundingClientRect();
+    //         }
+    //         return isEqual(prev, newRect) ? prev : newRect;
+    //     });
+
+    // }, [mouseXY, canvas.window, nodes]);
+
+
+    const renderSelectedBox = (r: IRect, i: number) => (
         <Box
             key={i}
             style={{
@@ -61,10 +67,10 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
                 outline: '1.4px solid ' + getColor('primary')[400],
                 outlineOffset: '1.5px',
                 zIndex: 999,
-                top: rect.top + 'px',
-                left: rect.left + 'px',
-                width: (rect.width || 0) + 'px',
-                height: (rect.height || 0) + 'px',
+                top: r.y + 'px',
+                left: r.x + 'px',
+                width: (r.width || 0) + 'px',
+                height: (r.height || 0) + 'px',
                 opacity: 1,
                 scale: 1
             }} />

@@ -1,7 +1,9 @@
-import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { createContext, useContext, useState, ReactNode, useEffect, useMemo } from 'react';
 import Component from '../entity/Component';
 import { useCanvas } from './CanvasProvider';
 import { useDelay } from '../utility';
+import { useComponentsManager } from './ComponentsProvider';
+import { isEqual } from 'lodash';
 
 const Context = createContext<Component[]>([]);
 
@@ -11,38 +13,57 @@ type SelectedProviderProps = {
 
 export const SelectedProvider = ({ children }: SelectedProviderProps) => {
 
+    const { findById } = useComponentsManager();
     const canvas = useCanvas();
     const [selectedComponents, setSelectedComponents] = useState<Component[]>([]);
+    const selected = useMemo(() => selectedComponents, [selectedComponents.map(e => e.id)]);
+
+    function findComponentElementUpward(startEl: HTMLElement, $: any): HTMLElement | null {
+        let el: HTMLElement | null = startEl;
+        while (el) {
+            const cid = $(el).data("cid");
+            if (cid) return el;
+            el = el.parentElement;
+        }
+        return null;
+    }
+
 
     const onMouseDown = useDelay(100, (e: MouseEvent) => {
         if (!canvas.window || !canvas.document) return;
 
         const $ = canvas.window.$;
         const [x, y] = [e.pageX, e.pageY];
-
         const element = canvas.document.elementFromPoint(x, y) as HTMLElement | null;
         if (!element) return;
 
-        const component = ($(element).data("component") ?? null) as Component | null;
+        const resolvedEl = findComponentElementUpward(element, $);
+        if (!resolvedEl) return;
+
+        const component = findById($(resolvedEl).data("cid"));
         if (!component) return;
 
         const isShift = e.shiftKey;
-        const isCtrl = e.ctrlKey || e.metaKey; // metaKey for Cmd on Mac
+        const isCtrl = e.ctrlKey || e.metaKey;
 
         setSelectedComponents(prev => {
             const alreadySelected = prev.find(c => c.id === component.id);
+            let newSelected: any[] = [];
 
             if (isShift || isCtrl) {
                 if (alreadySelected) {
-                    return prev.filter(c => c.id !== component.id); // unselect
+                    newSelected = prev.filter(c => c.id !== component.id);
                 } else {
-                    return [...prev, component]; // add to selection
+                    newSelected = [...prev, component];
                 }
             } else {
-                return [component]; // single select
+                newSelected = [component];
             }
+
+            return isEqual(newSelected, prev) ? prev : newSelected;
         });
     }, [canvas.window]);
+
 
 
     useEffect(() => {
@@ -56,7 +77,7 @@ export const SelectedProvider = ({ children }: SelectedProviderProps) => {
     }, [canvas.window]);
 
     return (
-        <Context.Provider value={selectedComponents}>
+        <Context.Provider value={selected}>
             {children}
         </Context.Provider>
     );

@@ -1,9 +1,9 @@
 import { createContext, useContext, useRef, useState, ReactNode, useEffect, useMemo } from 'react';
-import { useComponents } from './ComponentsProvider';
+import { useComponents, useComponentsManager } from './ComponentsProvider';
 import { useTypes } from './TypesProvider';
-import Component from '../entity/Component';
+import Component, { IComponent } from '../entity/Component';
 import { useCanvas } from './CanvasProvider';
-import Type from '../entity/Type';
+import { IRect } from '../type'
 
 interface NodeProviderState {
     nodes: JQuery<HTMLElement>[];
@@ -18,6 +18,7 @@ type NodeProviderProps = {
 
 export const NodesProvider = ({ children }: NodeProviderProps) => {
 
+    const { findById } = useComponentsManager();
     const { window, frame } = useCanvas();
     const components = useComponents();
     const types = useTypes();
@@ -35,25 +36,28 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
         }
     }, [window]);
 
-
     // Initial node creation from component tree
     useEffect(() => {
+
         if (!window?.$ || !mounted) return;
         const body = window.document!.body;
         const $ = window.$;
-        let changed = false;
 
         const buildNode = (component: Component, $parent: JQuery<HTMLElement>): JQuery<HTMLElement> | undefined => {
 
+            if (elementMapRef.current.has(component.id)) return;
+            if (component.type == "textnode") {
+                $parent.append(component.content || '');
+                return;
+            }
             if (!component.id) return;
-            const $el = elementMapRef.current.has(component.id)
-                ? elementMapRef.current.get(component.id)!
-                : $(`<${component.tagName || 'div'} id="${component.id}">`);
+
+            const $el = $(`<${component.tagName || 'div'}>`);
 
             if ($el.parent()[0] != $parent[0]) {
                 $el.appendTo($parent);
             }
-            $el.data('component', component);
+            $el.data('cid', component.id);
 
             // Set attributes
             const attributes = component.attributes || {};
@@ -62,7 +66,7 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
             );
 
             // Set text content
-            $el.text(component.content || '');
+            // $el.text(component.content || '');
 
 
             // Recursive render
@@ -74,16 +78,14 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
             }
 
             elementMapRef.current.set(component.id, $el);
-            changed = true;
+
             return $el;
         };
 
         // Render root components
         components.forEach((comp) => buildNode(comp, $(body)));
-
-        // if (changed) {
         setElements(Array.from(elementMapRef.current.values()));
-        // }
+
     }, [components, window, mounted]);
 
 
@@ -97,7 +99,7 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
         for (const $el of elements) {
 
             const element = $el?.get(0);
-            const component = $el?.data('component') as Component;
+            const component = findById($el?.data('cid')) as Component;
 
             if (!component?.id || !element) continue;
 
@@ -106,15 +108,15 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
             );
 
             if (typeDef) {
-                const expectedTag = typeDef.model.default?.tagName;
+                const expectedTag = component.tagName || typeDef.model.default?.tagName;
                 if (expectedTag && expectedTag.toLowerCase() !== element.tagName.toLowerCase()) {
 
-                    const $new = $(`<${expectedTag} id="${component.id}">`);
+                    const $new = $(`<${expectedTag}>`);
                     $.each(element.attributes, (_, attr) => {
                         $new.attr(attr.name, attr.value);
                     });
                     $new.append($el.contents());
-                    $new.data("component", component);
+                    $new.data("cid", component.id);
                     $el.replaceWith($new);
                     elementMapRef.current.set(component.id, $new);
                     typeDef._init($new, component);
@@ -134,18 +136,12 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
     }, [types, window]);
 
 
-
-    const contextValue = useMemo<NodeProviderState>(() => ({
-        nodes: elements,
-        getNodeById,
-    }), [elements]);
-
     return (
         <NodeProviderContext.Provider value={{ nodes: elements, getNodeById }}>
             {children}
         </NodeProviderContext.Provider>
     );
-};
+}
 
 // Overloads
 export function useNodes(): JQuery<HTMLElement>[];
@@ -168,13 +164,104 @@ export function useNodes(id?: any): any {
 };
 
 export const useNodeComponents = (components: Component[]) => {
+
     const context = useContext(NodeProviderContext);
     if (!context) {
         throw new Error('useNodes must be used within a NodesProvider');
     }
 
-    return context.nodes.filter($el =>
-        components.map(c => c.id).includes($el.attr("id")
-            || $el.data("component")?.id || '')
-    );
+    const nodes = context.nodes.filter($el => components.map(c => c.id).includes($el.attr("id") || $el.data("component")?.id || ''))
+    return nodes;
 }
+
+
+type NodeComponent = {
+    $el?: JQuery;
+    component?: Component;
+    parent(): NodeComponent | null;
+    children(components: IComponent[]): NodeComponent[];
+    append(component: IComponent | IComponent[]): void;
+    appendAt(component: IComponent, index: number): void;
+    insertBefore(component: IComponent): void;
+    insertAfter(component: IComponent): void;
+    remove(): void;
+    getRect(): IRect;
+    getIndex(): number;
+    on(event: keyof HTMLElementEventMap, callback: (e: Event) => void): void;
+    off(event: keyof HTMLElementEventMap, callback: (e: Event) => void): void;
+};
+
+
+export function useNodeComponent<T extends string | string[]>(id?: T): T extends string[] ? NodeComponent[] : NodeComponent | null {
+    const { remove, findById, updateById } = useComponentsManager();
+    const context = useContext(NodeProviderContext);
+    if (!context) throw new Error("useNodeComponent must be used within a NodesProvider");
+
+    return useMemo(() => {
+        const withContext = (id: string): NodeComponent => {
+            const model = findById(id);
+            const current = context.nodes.find(($el) => $el.data("cid") === id);
+
+            return {
+                ...(current && { $el: current }),
+                component: model,
+                parent() {
+                    const parentEl = current?.parent();
+                    const parentId = parentEl?.attr('id') || parentEl?.data("component")?.id;
+                    if (!parentId) return null;
+                    return withContext(parentId);
+                },
+                children(components) {
+                    if (Array.isArray(components)) {
+                        if (model)
+                            updateById(model.id, { components });
+                    }
+                    return (model?.components || [])
+                        .map(component => withContext(component?.id))
+                        .filter(Boolean);
+                },
+                append(component) {
+                    if (!model) return;
+                    updateById(model.id, {
+                        components: [
+                            ...(model.components || []),
+                            ...(Array.isArray(component) ? component : [component]),
+                        ],
+                    });
+                },
+                appendAt() { /* Implement if needed */ },
+                insertBefore() { /* Implement if needed */ },
+                insertAfter() { /* Implement if needed */ },
+                remove() {
+                    current?.remove();
+                    remove(id);
+                },
+                getRect() {
+                    const rect = current?.[0]?.getBoundingClientRect();
+                    return {
+                        x: rect?.x || 0,
+                        y: rect?.y || 0,
+                        width: rect?.width || 0,
+                        height: rect?.height || 0,
+                    };
+                },
+                getIndex() {
+                    return current?.index() ?? NaN;
+                },
+                on(event, callback) {
+                    current?.on(event, callback as any);
+                },
+                off(event, callback) {
+                    current?.off(event, callback as any);
+                },
+            };
+        };
+
+        if (!id) return null as any;
+
+        return Array.isArray(id)
+            ? id.map(i => withContext(i)).filter(Boolean) as any
+            : withContext(id) as any;
+    }, [id, context.nodes, findById, remove, updateById]);
+}
+

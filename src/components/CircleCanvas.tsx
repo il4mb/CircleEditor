@@ -74,7 +74,7 @@ export default function CircleCanvas() {
         if (window && doc && 'adoptedStyleSheets' in doc) {
             // @ts-ignore
             const sheet = new window.CSSStyleSheet();
-            sheet.replaceSync("body,html { eventsPointer: none; }\n[contenteditable] { outline: none;  user-select: auto; }\n* { user-select: none; }");
+            sheet.replaceSync("body,html { events-pointer: none; }\n[contenteditable], [contenteditable] * { outline: none;  user-select: text; }\n* { user-select: none; events-pointer: all; }");
             doc.adoptedStyleSheets = [...doc.adoptedStyleSheets, sheet];
         } else {
             style = doc.createElement("style");

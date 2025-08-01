@@ -48,7 +48,7 @@ export default class Type implements Omit<TypeDefine, 'extend'> {
                 const boundCallback = callback.bind(proxy);
                 const key = `_proxy_cb_${event}_${callback.toString()}`;
                 (callback as any)[key] = boundCallback;
-                this.$el.on(event, boundCallback);
+                this.$el.on(event, boundCallback as any);
             },
             off(event, callback) {
                 const key = `_proxy_cb_${event}_${callback.toString()}`;

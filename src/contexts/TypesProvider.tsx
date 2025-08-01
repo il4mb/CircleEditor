@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, ReactNode, useEffect, useRef, useMemo } from 'react';
-import Type, { TypeProxy, TypeDefine } from '../entity/Type';
+import Type, { TypeDefine } from '../entity/Type';
 import { useCanvas } from './CanvasProvider';
 import Component from '../entity/Component';
 
@@ -17,11 +17,9 @@ export const TypesProvider = ({ children }: InstancesProviderProps) => {
     const typesRef = useRef<Map<string, Type>>(new Map());
     const [types, setTypes] = useState<Type[]>([]);
 
-
-
     useEffect(() => {
-        if (!canvas.window) return;
 
+        if (!canvas.window) return;
         BASE_INSTANCES.forEach((t) => {
             if (!typesRef.current.has(t.type)) {
                 const type = new Type(t);
@@ -49,12 +47,9 @@ export const useTypes = () => {
     return context;
 }
 
-export const useTypeOf = (
-    component: Component | Component[] | undefined,
-    baseType: string
-): boolean => {
-    const types = useTypes();
+export const useTypeOf = (component: Component | Component[] | undefined, baseType: string): boolean => {
 
+    const types = useTypes();
     const getType = (typeName?: string): Type | undefined =>
         types.find((t) => t.type === typeName);
 
@@ -84,9 +79,7 @@ export const useTypeOf = (
 const BASE_INSTANCES: TypeDefine[] = [
     {
         type: 'text',
-        isComponent: (el) =>
-            ['P', 'SPAN', 'B', 'I', 'U', 'STRONG', 'EM', 'SMALL', 'MARK', 'DEL', 'INS', 'SUB', 'SUP', 'S', 'CODE', 'Q', 'CITE', 'TIME',]
-                .includes(el?.tagName || ''),
+        isComponent: (el) => el?.tagName == "P",
         model: {
             default: {
                 tagName: 'p',

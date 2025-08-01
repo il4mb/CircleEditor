@@ -30,7 +30,11 @@ export default function PanelTop({ children }: PanelTopProps) {
 
 
             <Stack direction={"row"} alignItems={"center"} spacing={1}>
-                <TextField value={active} sx={{ maxWidth: '300px' }} onChange={(e) => setActive(e.target.value)} size='small' fullWidth select>
+                <TextField
+                    value={active}
+                    sx={{ maxWidth: '300px' }}
+                    onChange={(e) => setActive(e.target.value)}
+                    size='small' fullWidth select>
                     {devices.map(e => (
                         <MenuItem key={e.name} value={e.name}>
                             {e.name}
