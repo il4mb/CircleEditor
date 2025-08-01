@@ -1,6 +1,6 @@
 import { ReactNode, Dispatch, SetStateAction } from 'react';
 import { ComponentsProvider } from './contexts/ComponentsProvider';
-import Component from './entity/Component';
+import { IComponent } from './entity/Component';
 import { TypesProvider } from './contexts/TypesProvider';
 import { CanvasProvider } from './contexts/CanvasProvider';
 import { StylesProvider } from './contexts/StylesProvider';
@@ -9,11 +9,12 @@ import AppTheme from './theme/AppTheme';
 import { NodesProvider } from './contexts/NodesProvider';
 import { OverlayProvider } from './contexts/OverlayProvider';
 import { SelectedProvider } from './contexts/SelectedProvider';
+import TextEditor from './components/TextEditor';
 
 type CircleEditorProviderProps = {
     children?: ReactNode;
-    components?: Component[];
-    onComponentsChange: Dispatch<SetStateAction<Component[]>>;
+    components?: IComponent[];
+    onComponentsChange: Dispatch<SetStateAction<IComponent[]>>;
 }
 export const CircleEditorRegister = ({ children, components, onComponentsChange }: CircleEditorProviderProps) => {
     return (
@@ -29,6 +30,7 @@ export const CircleEditorRegister = ({ children, components, onComponentsChange 
                                     <OverlayProvider>
                                         <StylesProvider>
                                             {children}
+                                            <TextEditor />
                                         </StylesProvider>
                                     </OverlayProvider>
                                 </DevicesProvider>

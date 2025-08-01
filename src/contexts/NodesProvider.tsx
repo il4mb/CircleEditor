@@ -1,16 +1,9 @@
-import {
-    createContext,
-    useContext,
-    useRef,
-    useState,
-    ReactNode,
-    useEffect,
-    useMemo,
-} from 'react';
+import { createContext, useContext, useRef, useState, ReactNode, useEffect, useMemo } from 'react';
 import { useComponents } from './ComponentsProvider';
 import { useTypes } from './TypesProvider';
 import Component from '../entity/Component';
 import { useCanvas } from './CanvasProvider';
+import Type from '../entity/Type';
 
 interface NodeProviderState {
     nodes: JQuery<HTMLElement>[];
@@ -25,15 +18,13 @@ type NodeProviderProps = {
 
 export const NodesProvider = ({ children }: NodeProviderProps) => {
 
-    const { window } = useCanvas();
+    const { window, frame } = useCanvas();
     const components = useComponents();
     const types = useTypes();
-
     const [mounted, setMounted] = useState(false);
     const elementMapRef = useRef<Map<string, JQuery>>(new Map());
     const [elements, setElements] = useState<JQuery<HTMLElement>[]>([]);
     const getNodeById = useMemo(() => (id: string) => elementMapRef.current.get(id), []);
-
 
     useEffect(() => {
         setMounted(true);
@@ -55,12 +46,13 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
         const buildNode = (component: Component, $parent: JQuery<HTMLElement>): JQuery<HTMLElement> | undefined => {
 
             if (!component.id) return;
-            if (elementMapRef.current.has(component.id)) {
-                return elementMapRef.current.get(component.id);
-            }
+            const $el = elementMapRef.current.has(component.id)
+                ? elementMapRef.current.get(component.id)!
+                : $(`<${component.tagName || 'div'} id="${component.id}">`);
 
-            const $el = $(`<${component.tagName || 'div'} id="${component.id}">`);
-            $el.appendTo($parent);
+            if ($el.parent()[0] != $parent[0]) {
+                $el.appendTo($parent);
+            }
             $el.data('component', component);
 
             // Set attributes
@@ -70,9 +62,8 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
             );
 
             // Set text content
-            if (component.content) {
-                $el.text(component.content);
-            }
+            $el.text(component.content || '');
+
 
             // Recursive render
             if (Array.isArray(component.components)) {
@@ -90,9 +81,9 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
         // Render root components
         components.forEach((comp) => buildNode(comp, $(body)));
 
-        if (changed) {
-            setElements(Array.from(elementMapRef.current.values()));
-        }
+        // if (changed) {
+        setElements(Array.from(elementMapRef.current.values()));
+        // }
     }, [components, window, mounted]);
 
 
@@ -126,9 +117,9 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
                     $new.data("component", component);
                     $el.replaceWith($new);
                     elementMapRef.current.set(component.id, $new);
+                    typeDef._init($new, component);
                 }
 
-                typeDef.model.init?.();
                 modified = true;
             }
         }
@@ -142,20 +133,22 @@ export const NodesProvider = ({ children }: NodeProviderProps) => {
         }
     }, [types, window]);
 
+
+
     const contextValue = useMemo<NodeProviderState>(() => ({
         nodes: elements,
         getNodeById,
     }), [elements]);
 
     return (
-        <NodeProviderContext.Provider value={contextValue}>
+        <NodeProviderContext.Provider value={{ nodes: elements, getNodeById }}>
             {children}
         </NodeProviderContext.Provider>
     );
 };
 
 // Overloads
-export function useNodes(): NodeProviderState;
+export function useNodes(): JQuery<HTMLElement>[];
 export function useNodes(id: string): JQuery<HTMLElement> | undefined;
 export function useNodes(ids: string[]): JQuery<HTMLElement>[];
 export function useNodes(id?: any): any {
@@ -171,5 +164,17 @@ export function useNodes(id?: any): any {
         return context.nodes.find($el => $el.attr("id") == id);
     }
 
-    return context;
+    return context.nodes;
 };
+
+export const useNodeComponents = (components: Component[]) => {
+    const context = useContext(NodeProviderContext);
+    if (!context) {
+        throw new Error('useNodes must be used within a NodesProvider');
+    }
+
+    return context.nodes.filter($el =>
+        components.map(c => c.id).includes($el.attr("id")
+            || $el.data("component")?.id || '')
+    );
+}

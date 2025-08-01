@@ -1,5 +1,5 @@
-type Component = {
-    id?: string;
+export default interface Component {
+    id: string;
     type?: string;
     tagName?: string;
     attributes?: {};
@@ -7,4 +7,7 @@ type Component = {
     content?: string;
 }
 
-export default Component;
+export type IComponent = Omit<Component, 'id' | 'components'> & {
+    id?: string;
+    components?: IComponent[];
+}

@@ -5,7 +5,7 @@ import { useCanvas } from './CanvasProvider';
 import { getColor } from '../theme/colors';
 import { motion } from "framer-motion";
 import { isEqual } from 'lodash';
-import { useSelectedProvider } from './SelectedProvider';
+import { useSelected } from './SelectedProvider';
 
 interface OverlayProviderState {
 
@@ -18,17 +18,17 @@ type OverlayProviderProps = {
 }
 export const OverlayProvider = ({ children }: OverlayProviderProps) => {
 
-    const selected = useSelectedProvider();
-    const selectedNodes = useNodes(selected.map(e => e.id!));
+    const selected = useSelected();
+    const selectedNodes = useNodes(selected.map(e => e.id));
     const selectedRects = selectedNodes.map(e => e[0].getBoundingClientRect());
+    const isMultipleSelected = selectedRects.length > 1;
 
-    const { nodes } = useNodes();
+    const nodes = useNodes();
     const canvas = useCanvas();
     const [mouseXY, setMouseXY] = useState({ x: 0, y: 0 });
     const [rect, setRect] = useState<DOMRect>();
 
     useEffect(() => {
-
         const onMouseMove = (e: MouseEvent) => setMouseXY({ x: e.pageX, y: e.pageY });
         if (canvas.window) canvas.window.addEventListener("mousemove", onMouseMove);
         return () => {
@@ -51,6 +51,24 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
         });
 
     }, [mouseXY, canvas.window, nodes]);
+
+
+    const renderSelectedBox = (rect: DOMRect, i: number) => (
+        <Box
+            key={i}
+            style={{
+                position: 'absolute',
+                outline: '1.4px solid ' + getColor('primary')[400],
+                outlineOffset: '1.5px',
+                zIndex: 999,
+                top: rect.top + 'px',
+                left: rect.left + 'px',
+                width: (rect.width || 0) + 'px',
+                height: (rect.height || 0) + 'px',
+                opacity: 1,
+                scale: 1
+            }} />
+    )
 
     return (
         <OverlayProviderContext.Provider value={{}}>
@@ -85,27 +103,13 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
                         }}
                         style={{
                             position: 'absolute',
-                            outline: '1px solid ' + getColor('primary')[400],
+                            outline: '1px solid ' + getColor('warning')[400],
                             outlineOffset: '1.5px',
                         }} />
                 )}
 
-                {selectedRects.map((r, i) => (
-                    <Box
-                        key={i}
-                        style={{
-                            position: 'absolute',
-                            outline: '2px solid ' + getColor('primary')[400],
-                            outlineOffset: '1.5px',
-                            zIndex: 999,
-                            top: r.top + 'px',
-                            left: r.left + 'px',
-                            width: (r.width || 0) + 'px',
-                            height: (r.height || 0) + 'px',
-                            opacity: 1,
-                            scale: 1
-                        }} />
-                ))}
+                {selectedRects.map(renderSelectedBox)}
+
             </Box>
         </OverlayProviderContext.Provider>
     );

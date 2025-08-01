@@ -1,10 +1,10 @@
 import React, { useState } from "react";
 import ReactDOM from "react-dom/client";
 import CircleEditor from "../src/CircleEditor";
-import Component from "../src/entity/Component";
+import { IComponent } from "../src/entity/Component";
 
 
-const DUMMY_COMPONENTS: any[] = [
+const DUMMY_COMPONENTS: IComponent[] = [
     {
         type: 'heading',
         content: 'Heading...'
@@ -29,7 +29,7 @@ const DUMMY_COMPONENTS: any[] = [
 ]
 
 const App = () => {
-    const [components, setComponents] = useState<Component[]>(DUMMY_COMPONENTS);
+    const [components, setComponents] = useState<IComponent[]>(DUMMY_COMPONENTS);
 
     return (
         <div>

@@ -1,15 +1,15 @@
 import { Box, Stack } from '@mui/material';
-import Component from './entity/Component';
+import { IComponent } from './entity/Component';
 import { CircleEditorRegister } from './CircleEditorProvider';
 import PanelTop from './panels/PanelTop';
 import PanelLeft from './panels/PanelLeft';
 import PanelRight from './panels/PanelRight';
-import { Dispatch, SetStateAction, useEffect, useRef, useState } from 'react';
+import { Dispatch, SetStateAction } from 'react';
 import CircleCanvas from './components/CircleCanvas';
 
 export interface IEditorProps {
-    components: Component[];
-    onComponentsChange: Dispatch<SetStateAction<Component[]>>;
+    components: IComponent[];
+    onComponentsChange: Dispatch<SetStateAction<IComponent[]>>;
 }
 
 export default function CircleEditor({ components, onComponentsChange }: IEditorProps) {

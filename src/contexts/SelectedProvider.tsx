@@ -62,7 +62,7 @@ export const SelectedProvider = ({ children }: SelectedProviderProps) => {
     );
 };
 
-export const useSelectedProvider = () => {
+export const useSelected = () => {
     const context = useContext(Context);
     if (!context) throw new Error('useSelectedProvider must be used within a SelectedProvider');
     return context;
