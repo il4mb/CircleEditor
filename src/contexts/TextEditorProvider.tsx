@@ -1,8 +1,9 @@
-import { createContext, useContext, useState, ReactNode, useMemo, useEffect } from 'react';
-import { useCanvas } from './CanvasProvider';
+import { createContext, useContext, useState, ReactNode, useMemo, useEffect, useRef } from 'react';
+import { CanvasWindow, useCanvas } from './CanvasProvider';
 import { useSelected } from './SelectedProvider';
 import { useNodeComponent } from './NodesProvider';
 import { useTypeOf } from './TypesProvider';
+import { AnimatePresence, motion } from 'framer-motion';
 
 const FORMAT_TAGS = {
     bold: ['b', 'strong'],
@@ -12,11 +13,25 @@ const FORMAT_TAGS = {
 };
 type FormatName = keyof typeof FORMAT_TAGS;
 
+type SelectionContext = {
+    selection: Selection;
+    range: Range;
+    doc: Document;
+    element: HTMLElement;
+} | null;
+type EditorStateContext = {
+    window: CanvasWindow;
+    document: CanvasWindow['document'];
+    selection: Selection;
+}
 interface TextEditorState {
-    wrapSelection: (tagName: FormatName) => void;
-    unwrapSelection: (tagName: FormatName) => void;
+    element: HTMLElement;
+    formats: Set<string>;
+    toggleFormat: (tag: keyof HTMLElementTagNameMap) => void;
+    getContext: () => EditorStateContext;
+    wrapSelection: (tagName: string) => void;
+    unwrapSelection: (tagName: string) => void;
     clearFormats: () => void;
-    formats: Set<FormatName>;
     updateFormats: () => void;
 }
 
@@ -24,74 +39,45 @@ const TextEditorContext = createContext<TextEditorState | undefined>(undefined);
 
 type TextEditorProviderProps = {
     children?: ReactNode;
+    position?: "floating" | "fixed";
 }
-export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
+export const TextEditorProvider = ({ children, position = "floating" }: TextEditorProviderProps) => {
 
     const canvas = useCanvas();
-    const [formats, setAppliedFormats] = useState<Set<FormatName>>(new Set());
-
+    const [formats, setAppliedFormats] = useState<Set<string>>(new Set());
     const selected = useSelected();
     const id = useMemo(() => selected?.[0]?.id, [selected]);
     const node = useNodeComponent(id);
     const isText = useTypeOf(selected, 'text');
 
-    // State
+    // state
+    const [isDragging, setIsDragging] = useState(false);
     const [editing, setEditing] = useState(false);
+    const elRef = useRef<HTMLDivElement>(null);
+    const [x, setX] = useState(0);
+    const [y, setY] = useState(0);
 
+    const isOnEditing = Boolean(isText && editing && canvas.window && canvas.document);
 
-
-    const getSelectionContext = () => {
-        if (!canvas.window) return null;
+    const getSelectionContext = (): SelectionContext => {
+        if (!canvas.window || !node?.$el?.[0]) return null;
 
         const selection = canvas.window.getSelection();
         if (!selection || selection.rangeCount === 0) return null;
 
         const range = selection.getRangeAt(0);
-        return { selection, range, doc: canvas.window.document };
-    };
-
-    const normalizeRangeBoundaries = (range: Range) => {
-        const { startContainer, startOffset, endContainer, endOffset } = range;
-
-        if (startContainer.nodeType === Node.TEXT_NODE && startOffset > 0) {
-            (startContainer as Text).splitText(startOffset);
-            range.setStart(startContainer, startOffset);
-        }
-
-        if (endContainer.nodeType === Node.TEXT_NODE &&
-            endOffset < (endContainer.nodeValue?.length || 0)) {
-            (endContainer as Text).splitText(endOffset);
-            range.setEnd(endContainer, endOffset);
-        }
-    };
-
-    const createCaretMarker = (doc: Document) => {
-        const marker = doc.createElement('span');
-        marker.id = '__caret_marker__';
-        marker.style.cssText = 'display:inline-block;width:0;height:0;overflow:hidden;';
-        return marker;
-    };
-
-    const restoreCaretFromMarker = (marker: HTMLElement, selection: Selection, doc: Document) => {
-        if (!marker.parentNode) return;
-
-        const index = Array.from(marker.parentNode.childNodes).indexOf(marker);
-        const range = doc.createRange();
-        range.setStart(marker.parentNode, index);
-        range.collapse(true);
-
-        selection.removeAllRanges();
-        selection.addRange(range);
-        marker.remove();
+        return { selection, range, doc: canvas.window.document, element: node.$el[0] };
     };
 
     const setSelectionAfter = (node: Node, selection: Selection, doc: Document) => {
+        const context = getSelectionContext();
+        context?.element?.focus();
         const range = doc.createRange();
         range.setStartAfter(node);
         range.collapse(true);
         selection.removeAllRanges();
         selection.addRange(range);
-    };
+    }
 
     const findParentWithTag = (node: Node, tagName: string, doc: Document) => {
         let current: Node | null = node;
@@ -105,15 +91,15 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
             current = current.parentNode;
         }
         return null;
-    };
+    }
 
-    const wrapCurrentWord = (tagName: string, { selection, range, doc }: any) => {
+    const wrapCurrentWord = (tagName: string, { selection, range, doc }: { selection: Selection; range: Range; doc: Document }) => {
         const textNode = range.startContainer;
         if (textNode.nodeType !== Node.TEXT_NODE) return null;
 
         const text = textNode.textContent || '';
         const offset = range.startOffset;
-        const wordRegex = /[\w\u00C0-\u024F]+/;
+        const wordRegex = /[\w\u00C0-\u024F\n]+/;
 
         let start = offset;
         while (start > 0 && wordRegex.test(text[start - 1])) start--;
@@ -131,9 +117,11 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         wrapper.appendChild(wordRange.extractContents());
         wordRange.insertNode(wrapper);
 
+        mergeAdjacentSameTag(wrapper, tagName);
+
         setSelectionAfter(wrapper, selection, doc);
         return wrapper;
-    };
+    }
 
     const mergeAdjacentSameTag = (element: HTMLElement, tagName: string) => {
         tagName = tagName.toUpperCase();
@@ -185,7 +173,7 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         if (isEmptyOrWhitespace(element)) {
             element.remove();
         }
-    };
+    }
 
     const unwrapAtCaret = (tagName: string, { selection, doc }: any) => {
         const anchorNode = selection.anchorNode;
@@ -194,11 +182,11 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         const wrapper = findParentWithTag(anchorNode, tagName, doc);
         if (!wrapper) return;
 
-        const marker = createCaretMarker(doc);
-        selection.getRangeAt(0).insertNode(marker);
+        // const marker = createCaretMarker(doc);
+        // selection.getRangeAt(0).insertNode(marker);
         unwrapElement(wrapper);
-        restoreCaretFromMarker(marker, selection, doc);
-    };
+        // restoreCaretFromMarker(marker, selection, doc);
+    }
 
     const unwrapElement = (element: Element) => {
         const parent = element.parentNode;
@@ -212,7 +200,7 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         parent.insertBefore(fragment, element);
         parent.removeChild(element);
         cleanEmptyParents(parent);
-    };
+    }
 
     const cleanEmptyParents = (node: Node) => {
         let current: Node | null = node;
@@ -227,7 +215,7 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
                 break;
             }
         }
-    };
+    }
 
     const cleanFormatting = (fragment: DocumentFragment, doc: Document) => {
         const cleaned = doc.createDocumentFragment();
@@ -257,15 +245,13 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         }
 
         return cleaned;
-    };
-
-
+    }
 
     const unwrapSelection = (tagName: string) => {
         const ctx = getSelectionContext();
         if (!ctx) return;
 
-        const { selection, range, doc } = ctx;
+        const { selection, range, doc, element } = ctx;
 
         if (range.collapsed) {
             return unwrapAtCaret(tagName, { selection, doc });
@@ -282,12 +268,7 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         });
 
         range.insertNode(fragment);
-
-        const newRange = doc.createRange();
-        newRange.selectNodeContents(range.extractContents());
-        range.insertNode(newRange.extractContents());
-        selection.removeAllRanges();
-        selection.addRange(newRange);
+        element.focus();
     }
 
     const wrapSelection = (tagName: string) => {
@@ -320,100 +301,203 @@ export const TextEditorProvider = ({ children }: TextEditorProviderProps) => {
         const ctx = getSelectionContext();
         if (!ctx) return;
 
-        const { range, doc } = ctx;
+        const { range, doc, element } = ctx;
         if (range.collapsed) {
-
+            element.innerHTML = element.textContent;
+            element.focus();
             return;
         }
 
-        // Create markers
-        const startMarker = createCaretMarker(doc);
-        const endMarker = createCaretMarker(doc);
-        range.insertNode(endMarker);
-        range.cloneRange().insertNode(startMarker);
-
         // Process content between markers
         const contentRange = doc.createRange();
-        contentRange.setStartAfter(startMarker);
-        contentRange.setEndBefore(endMarker);
-
         const fragment = contentRange.extractContents();
         const cleaned = cleanFormatting(fragment, doc);
         contentRange.insertNode(cleaned);
+        element.focus();
+
     }
 
     const updateFormats = () => {
-
         const ctx = getSelectionContext();
         if (!ctx) return;
 
-        const { selection, doc } = ctx;
+        const { selection, element } = ctx;
         const anchorNode = selection?.anchorNode;
         if (!anchorNode) return;
 
         const formats = new Set<FormatName>();
         let current: Node | null = anchorNode;
 
-        if (current.nodeType === Node.ELEMENT_NODE) {
-            const element = current as HTMLElement;
-            const tag = element.tagName.toLowerCase();
-
-            // Check tag-based formatting
-            for (const [format, tags] of Object.entries(FORMAT_TAGS)) {
-                if (tags.includes(tag)) {
-                    formats.add(format as FormatName);
-                }
+        // Traverse up DOM tree until the editing container (`element`)
+        while (current && current !== element) {
+            if (current.nodeType === Node.ELEMENT_NODE) {
+                const tag = (current as HTMLElement).tagName.toLowerCase();
+                formats.add(tag as any);
             }
-
-            // Check style-based formatting
-            const style = getComputedStyle(element);
-            if (style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 600) {
-                formats.add('bold');
-            }
-            if (style.fontStyle === 'italic') {
-                formats.add('italic');
-            }
-            if (style.textDecoration.includes('underline')) {
-                formats.add('underline');
-            }
-            if (style.textDecoration.includes('line-through')) {
-                formats.add('strike');
-            }
+            current = current.parentNode;
         }
 
         setAppliedFormats(formats);
+    };
+
+
+    const getRangeFromPoint = (x: number, y: number, doc: Document) => {
+
+        if (doc.caretRangeFromPoint) {
+            return doc.caretRangeFromPoint(x, y);
+        }
+
+        if (doc.caretPositionFromPoint) {
+            const pos = doc.caretPositionFromPoint(x, y);
+            if (pos?.offsetNode) {
+                const range = doc.createRange();
+                range.setStart(pos.offsetNode, pos.offset);
+                range.collapse(true);
+                return range;
+            }
+        }
+
+        return null;
+    };
+
+    // Formatting handlers
+    const toggleFormat = (tag: keyof HTMLElementTagNameMap) => {
+        const isApplied = formats.has(tag);
+        if (isApplied) {
+            unwrapSelection(tag);
+        } else {
+            wrapSelection(tag);
+        }
+    };
+
+
+    const startEditing = (x: number, y: number) => {
+
+        const document = canvas.document;
+        const $el = node?.$el;
+        if (!$el || !document || !isText) return;
+
+        $el.attr("contenteditable", 'true');
+        $el.trigger("focus");
+
+        setTimeout(() => {
+            if (!canvas.window || !canvas.document) return;
+            const selection = canvas.window.getSelection();
+            selection?.removeAllRanges();
+            const range = getRangeFromPoint(x, y, document);
+            if (range) {
+                selection?.addRange(range);
+            }
+
+            setEditing(true);
+
+            setTimeout(() => {
+                if (position == "floating") {
+                    updateFloatingXY();
+                }
+            }, 80);
+        }, 0);
+    }
+
+    const updateFloatingXY = () => {
+        if (!canvas.window || !canvas.frame) return;
+
+        const selection = canvas.window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+
+        const range = selection.getRangeAt(0);
+        const rects = range.getClientRects();
+        if (rects.length === 0) return;
+
+        const firstRect = rects[0];
+        const iframeRect = canvas.frame.getBoundingClientRect();
+        const elRect = elRef.current?.getBoundingClientRect() || { height: 0, width: 0 };
+
+        setX(iframeRect.left + firstRect.left - elRect.width + 25);
+        setY(iframeRect.top + firstRect.top - elRect.height - 35);
+    }
+
+    const eventSelectionChange = () => {
+        updateFormats();
+        if (position == "floating") {
+            updateFloatingXY();
+        }
     }
 
     // Effects
     useEffect(() => {
-        const $el = node?.$el;
-        if (!$el || !isText) return;
+        const element = node?.$el?.[0];
+        if (!element || !isText || !canvas.document) return;
 
-        const enableEditor = () => setEditing(true);
-        $el.on("dblclick", enableEditor);
+        const enableEditor = (e: MouseEvent) => startEditing(e.clientX, e.clientY);
+
+        element.addEventListener('dblclick', enableEditor);
+        canvas.document.addEventListener('selectionchange', eventSelectionChange);
+        canvas.document.addEventListener('mousedown', () => setIsDragging(true));
+        canvas.document.addEventListener('mouseup', () => setIsDragging(false));
+
 
         return () => {
-
             setAppliedFormats(new Set());
+            canvas.window?.getSelection()?.removeAllRanges();
             setEditing(false);
+            element?.blur();
+            element?.removeAttribute("contenteditable");
+            element?.removeEventListener('dblclick', enableEditor);
+            canvas.document?.removeEventListener('selectionchange', eventSelectionChange);
+            canvas.document?.removeEventListener('mousedown', () => setIsDragging(true));
+            canvas.document?.removeEventListener('mouseup', () => setIsDragging(false));
+        }
+    }, [node?.component?.id, isText, position]);
 
-            $el.removeAttr("contenteditable");
-            $el.trigger("blur");
-            $el.off("dblclick", enableEditor);
-        };
-    }, [node?.component?.id, isText]);
+
+    useEffect(() => {
+        if (!node || position != "fixed") return;
+        const rect = node.getRect();
+        const elRect = elRef.current?.getBoundingClientRect() || { height: 0, width: 0 };
+        setX(rect.x + canvas.rect.x - elRect.width / 2);
+        setY(rect.y + canvas.rect.y - elRect.height - 35);
+
+    }, [canvas.scrollTop, canvas.rect, node?.component?.id, position]);
 
 
     return (
         <TextEditorContext.Provider
             value={{
+                element: node?.$el?.[0]!,
+                getContext(): EditorStateContext {
+                    return {
+                        window: canvas.window!,
+                        document: canvas.document!,
+                        selection: canvas.window?.getSelection() as Selection
+                    }
+                },
                 wrapSelection,
                 unwrapSelection,
                 clearFormats,
+                toggleFormat,
                 formats,
                 updateFormats
             }}>
-            {children}
+            <AnimatePresence mode='sync'>
+                {isOnEditing && (
+                    <motion.div
+                        key={selected.map(e => e.id).join(',')}
+                        ref={elRef}
+                        initial={{ opacity: 0, scale: 0.5, x, y }}
+                        animate={{ opacity: 1, scale: 1, x, y }}
+                        exit={{ opacity: 0, scale: 0.5, x, y }}
+                        style={{
+                            position: 'fixed',
+                            borderRadius: '6px',
+                            zIndex: 999,
+                            overflow: 'hidden',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                        }}>
+                        {children}
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </TextEditorContext.Provider>
     );
 };

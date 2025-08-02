@@ -9,14 +9,22 @@ import AppTheme from './theme/AppTheme';
 import { NodesProvider } from './contexts/NodesProvider';
 import { OverlayProvider } from './contexts/OverlayProvider';
 import { SelectedProvider } from './contexts/SelectedProvider';
+import { TextEditorProvider } from './contexts/TextEditorProvider';
 import TextEditor from './components/TextEditor';
 
 type CircleEditorProviderProps = {
     children?: ReactNode;
     components?: IComponent[];
     onComponentsChange: Dispatch<SetStateAction<IComponent[]>>;
+    textEditor?: ReactNode;
 }
-export const CircleEditorRegister = ({ children, components, onComponentsChange }: CircleEditorProviderProps) => {
+export const CircleEditorRegister = ({
+    children,
+    components,
+    textEditor = <TextEditor />,
+    onComponentsChange
+}: CircleEditorProviderProps) => {
+
     return (
         <AppTheme>
             <CanvasProvider>
@@ -30,7 +38,9 @@ export const CircleEditorRegister = ({ children, components, onComponentsChange 
                                     <OverlayProvider>
                                         <StylesProvider>
                                             {children}
-                                            <TextEditor />
+                                            <TextEditorProvider>
+                                                {textEditor}
+                                            </TextEditorProvider>
                                         </StylesProvider>
                                     </OverlayProvider>
                                 </DevicesProvider>
