@@ -192,7 +192,7 @@ type NodeComponent = {
 };
 
 
-export function useNodeComponent<T extends string | string[]>(id?: T): T extends string[] ? NodeComponent[] : NodeComponent | null {
+export function useNodeComponent<T extends string | string[]>(id?: T): T extends string[] ? NodeComponent[] : NodeComponent | undefined {
     const { remove, findById, updateById } = useComponentsManager();
     const context = useContext(NodeProviderContext);
     if (!context) throw new Error("useNodeComponent must be used within a NodesProvider");

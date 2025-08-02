@@ -55,17 +55,17 @@ export default function TextEditor({ children }: TextEditorProps) {
 
     // Refs
     const elRef = useRef<HTMLDivElement>(null);
-    const debouncedChange = useRef(debounce(() => {
+    const debouncedChange = debounce(() => {
         const content = node?.$el?.html();
         if (content && node?.component) {
             updateById(id, { components: [{ type: "textnode", content }] });
         }
-    }, 300));
+    }, 300);
 
     // Derived values
     const shouldVisible = editing && isText && selected.length === 1;
     const x = caret.x - 165;
-    const y = caret.y -85;
+    const y = caret.y - 85;
 
     // Utility functions
     const normalizeRangeBoundaries = (range: Range) => {
@@ -122,25 +122,65 @@ export default function TextEditor({ children }: TextEditorProps) {
             setSelectionAfter(wrapper, selection, doc);
         }
 
+        mergeAdjacentSameTag(wrapper, tagName);
+
         updateFormats();
-        debouncedChange.current();
+        debouncedChange();
     };
 
-    const unwrapSelection = (tagName: string) => {
-        const ctx = getSelectionContext();
-        if (!ctx) return;
+    function mergeAdjacentSameTag(element: HTMLElement, tagName: string) {
+        tagName = tagName.toUpperCase();
 
-        const { selection, range, doc } = ctx;
+        const isEmptyOrWhitespace = (el: HTMLElement) => {
+            return !el.textContent || el.textContent.trim() === '';
+        };
 
-        if (range.collapsed) {
-            unwrapAtCaret(tagName, ctx);
-        } else {
-            unwrapRange(tagName, ctx);
+        const unwrapElement = (el: HTMLElement) => {
+            const parent = el.parentNode!;
+            while (el.firstChild) {
+                parent.insertBefore(el.firstChild, el);
+            }
+            el.remove();
+        };
+
+        // Merge with previous siblings
+        let prev = element.previousSibling;
+        while (prev && prev.nodeType === Node.ELEMENT_NODE) {
+            const prevEl = prev as HTMLElement;
+            if (prevEl.tagName === tagName) {
+                element.innerHTML = prevEl.innerHTML + element.innerHTML;
+                prevEl.remove();
+                prev = element.previousSibling;
+            } else if (isEmptyOrWhitespace(prevEl)) {
+                prev = prev.previousSibling;
+                prevEl.remove(); // remove empty tag
+            } else break;
         }
 
-        updateFormats();
-        debouncedChange.current();
-    };
+        // Merge with next siblings
+        let next = element.nextSibling;
+        while (next && next.nodeType === Node.ELEMENT_NODE) {
+            const nextEl = next as HTMLElement;
+            if (nextEl.tagName === tagName) {
+                element.innerHTML += nextEl.innerHTML;
+                nextEl.remove();
+                next = element.nextSibling;
+            } else if (isEmptyOrWhitespace(nextEl)) {
+                next = next.nextSibling;
+                nextEl.remove(); // remove empty tag
+            } else break;
+        }
+
+        // Clean up children with the same tag (flatten nested)
+        const nested = element.querySelectorAll(tagName);
+        nested.forEach(n => unwrapElement(n as any));
+
+        // Final check: remove this element if empty (after merge/unwrap)
+        if (isEmptyOrWhitespace(element)) {
+            element.remove();
+        }
+    }
+
 
     const wrapCurrentWord = (tagName: string, { selection, range, doc }: any) => {
         const textNode = range.startContainer;
@@ -192,16 +232,172 @@ export default function TextEditor({ children }: TextEditorProps) {
         restoreCaretFromMarker(marker, selection, doc);
     };
 
-    const unwrapRange = (tagName: string, { selection, range, doc }: any) => {
-        const fragment = range.extractContents();
-        const wrappers = fragment.querySelectorAll(tagName);
 
-        wrappers.forEach((wrapper: Element) => {
-            unwrapElement(wrapper);
-        });
+    const unwrapSelection = (tagName: string) => {
+        const ctx = getSelectionContext();
+        if (!ctx) return;
 
-        range.insertNode(fragment);
-        selection.selectAllChildren(fragment);
+        const { selection, range, doc } = ctx;
+
+        if (range.collapsed) {
+            return unwrapAtCaret(tagName, { selection, range, doc });
+        }
+
+        // Get all tags that represent this format (b/strong for bold)
+        const tagsToMatch = FORMAT_TAGS[tagName as keyof typeof FORMAT_TAGS] || [tagName];
+
+        // Handle case where selection is entirely within a matching element
+        const commonAncestor = range.commonAncestorContainer;
+        let parentElement: HTMLElement | null = null;
+
+        // Check if we're directly inside a matching element
+        if (commonAncestor.nodeType === Node.ELEMENT_NODE &&
+            tagsToMatch.includes((commonAncestor as Element).tagName.toLowerCase())) {
+            parentElement = commonAncestor as HTMLElement;
+        }
+        // Or if a parent is a matching element
+        else {
+            let current: Node | null = commonAncestor;
+            while (current && current !== doc.body) {
+                if (current.nodeType === Node.ELEMENT_NODE &&
+                    tagsToMatch.includes((current as Element).tagName.toLowerCase())) {
+                    parentElement = current as HTMLElement;
+                    break;
+                }
+                current = current.parentNode;
+            }
+        }
+
+        // If we found a matching parent element
+        if (parentElement) {
+            unwrapPartialSelection(tagName);
+        } else {
+
+            // Original logic for non-element cases
+            const fragment = range.extractContents();
+
+            tagsToMatch.forEach(tag => {
+                const elements = fragment.querySelectorAll(tag);
+                elements.forEach((element: any) => {
+                    unwrapSingleElement(element);
+                });
+            });
+
+            range.insertNode(fragment);
+        }
+
+        // Restore selection
+        const newRange = doc.createRange();
+        newRange.selectNodeContents(range.extractContents());
+        range.insertNode(newRange.extractContents());
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+        
+        updateFormats();
+        debouncedChange();
+    };
+
+
+    const unwrapPartialSelection = (tagName: string) => {
+        const ctx = getSelectionContext();
+        if (!ctx) return;
+        const { selection, range, doc } = ctx;
+        if (range.collapsed) return;
+
+        const tag = tagName.toLowerCase();
+        const formatTags = FORMAT_TAGS[tagName as keyof typeof FORMAT_TAGS] || [tag];
+
+        // Step 1: Get common ancestor
+        const ancestor = range.commonAncestorContainer;
+        let formattingParent: HTMLElement | null = null;
+
+        let current: Node | null = ancestor;
+        while (current && current !== doc.body) {
+            if (current.nodeType === Node.ELEMENT_NODE &&
+                formatTags.includes((current as Element).tagName.toLowerCase())) {
+                formattingParent = current as HTMLElement;
+                break;
+            }
+            current = current.parentNode;
+        }
+
+        if (!formattingParent) return;
+
+        // Step 2: Split the formatting element at selection start and end
+        const splitRange = doc.createRange();
+        splitRange.selectNode(formattingParent);
+        const clone = formattingParent.cloneNode(true) as HTMLElement;
+
+        const allText = formattingParent.textContent!;
+        const startOffset = getTextOffsetWithin(formattingParent, range.startContainer, range.startOffset);
+        const endOffset = getTextOffsetWithin(formattingParent, range.endContainer, range.endOffset);
+
+        // Text parts
+        const left = allText.slice(0, startOffset);
+        const middle = allText.slice(startOffset, endOffset);
+        const right = allText.slice(endOffset);
+
+        // Step 3: Create 3 parts
+        const leftNode = left ? wrapInTag(left, tag) : null;
+        const middleNode = doc.createTextNode(middle); // <-- unwrapped
+        const rightNode = right ? wrapInTag(right, tag) : null;
+
+        // Step 4: Replace original element with split parts
+        const parent = formattingParent.parentNode!;
+        const frag = doc.createDocumentFragment();
+        if (leftNode) frag.appendChild(leftNode);
+        frag.appendChild(middleNode);
+        if (rightNode) frag.appendChild(rightNode);
+
+        parent.replaceChild(frag, formattingParent);
+
+        // Step 5: Restore selection on unwrapped node
+        const newRange = doc.createRange();
+        newRange.setStart(middleNode, 0);
+        newRange.setEnd(middleNode, middle.length);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+
+        updateFormats();
+        debouncedChange();
+    };
+
+    // Helper to get flat offset into a node tree
+    function getTextOffsetWithin(root: Node, container: Node, offset: number): number {
+        let count = 0;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node === container) return count + offset;
+            count += node.textContent!.length;
+        }
+        return count;
+    }
+
+    function wrapInTag(text: string, tag: string): HTMLElement {
+        const el = document.createElement(tag);
+        el.textContent = text;
+        return el;
+    }
+
+    // Helper to unwrap a single element while preserving its children
+    const unwrapSingleElement = (element: HTMLElement) => {
+        const parent = element.parentNode;
+        if (!parent) return;
+
+        // Create marker to track position
+        const marker = document.createComment('unwrap-marker');
+        parent.insertBefore(marker, element);
+
+        // Move all children out
+        while (element.firstChild) {
+            parent.insertBefore(element.firstChild, marker);
+        }
+
+        // Remove empty element and marker
+        parent.removeChild(element);
+        parent.removeChild(marker);
+
     };
 
     const findParentWithTag = (node: Node, tagName: string, doc: Document) => {
@@ -218,14 +414,41 @@ export default function TextEditor({ children }: TextEditorProps) {
         return null;
     };
 
+    // Improved version that handles partial selections better
     const unwrapElement = (element: Element) => {
         const parent = element.parentNode;
         if (!parent) return;
 
+        // Create a document fragment to hold children temporarily
+        const fragment = document.createDocumentFragment();
+
+        // Move all children to fragment
         while (element.firstChild) {
-            parent.insertBefore(element.firstChild, element);
+            fragment.appendChild(element.firstChild);
         }
+
+        // Insert fragment where the element was
+        parent.insertBefore(fragment, element);
+
+        // Remove the empty element
         parent.removeChild(element);
+    };
+
+    // Helper function to clean up empty parent nodes
+    const cleanEmptyParents = (node: Node) => {
+        let current: Node | null = node;
+
+        while (current && current !== document.body) {
+            if (current.nodeType === Node.ELEMENT_NODE &&
+                (current as Element).childNodes.length === 0 &&
+                (current as Element).tagName.toLowerCase() !== 'br') { // Preserve <br> tags
+                const next = current.parentNode as any;
+                current.parentNode?.removeChild(current);
+                current = next;
+            } else {
+                break;
+            }
+        }
     };
 
     const createCaretMarker = (doc: Document) => {
@@ -277,19 +500,22 @@ export default function TextEditor({ children }: TextEditorProps) {
     const toggleFormat = (format: string) => {
         const isApplied = appliedFormats.has(format);
         const action = FORMAT_ACTIONS[format as keyof typeof FORMAT_ACTIONS];
+        const context = getSelectionContext();
+        // Save the current selection details
 
         if (isApplied) {
             unwrapSelection(action.tag);
         } else {
             wrapSelection(action.tag);
         }
+        node?.$el?.trigger("focus");
     };
 
     const handleRemoveFormatting = () => {
         const ctx = getSelectionContext();
         if (!ctx) return;
 
-        const { selection, range, doc } = ctx;
+        const { range, doc } = ctx;
         if (range.collapsed) return;
 
         // Create markers
@@ -308,10 +534,10 @@ export default function TextEditor({ children }: TextEditorProps) {
         contentRange.insertNode(cleaned);
 
         // Restore selection
-        restoreSelectionBetweenMarkers(startMarker, endMarker, selection, doc);
+        // restoreSelectionBetweenMarkers(startMarker, endMarker, selection, doc);
 
         updateFormats();
-        debouncedChange.current();
+        debouncedChange();
     };
 
     const cleanFormatting = (fragment: DocumentFragment, doc: Document) => {
@@ -344,32 +570,22 @@ export default function TextEditor({ children }: TextEditorProps) {
         return cleaned;
     };
 
-    const restoreSelectionBetweenMarkers = (
-        start: HTMLElement,
-        end: HTMLElement,
-        selection: Selection,
-        doc: Document
-    ) => {
-        if (!start.parentNode || !end.parentNode) return;
+    function removeEmptyTextNodes(parent: Node) {
+        const walker = document.createTreeWalker(parent, NodeFilter.SHOW_TEXT);
+        const toRemove: Text[] = [];
 
-        const range = doc.createRange();
-        range.setStartAfter(start);
-        range.setEndBefore(end);
-
-        selection.removeAllRanges();
-        selection.addRange(range);
-
-        start.remove();
-        end.remove();
-    };
-
-    // Event handlers
-    const eventOnChange = () => {
-        const content = node?.$el?.html();
-        if (content && node?.component) {
-            updateById(id, { components: [{ type: "textnode", content }] });
+        while (walker.nextNode()) {
+            const node = walker.currentNode as Text;
+            if (!node.nodeValue || node.nodeValue.trim() === '') {
+                toRemove.push(node);
+            }
         }
-    };
+
+        toRemove.forEach(n => n.remove());
+    }
+
+
+
 
     const eventOnDoubleClick = (e: MouseEvent) => {
         const $el = node?.$el;
@@ -423,7 +639,7 @@ export default function TextEditor({ children }: TextEditorProps) {
         sanitized.textContent = text;
 
         $el.append(sanitized.innerHTML);
-        debouncedChange.current();
+        debouncedChange();
     };
 
     const updateFormats = () => {
@@ -503,7 +719,7 @@ export default function TextEditor({ children }: TextEditorProps) {
         if (!$el || !isText) return;
 
         $el.on("dblclick", eventOnDoubleClick as any);
-        $el.on("input", debouncedChange.current);
+        $el.on("input", debouncedChange);
         $el.on('paste', eventOnPaste as any);
 
         const doc = canvas.document;
@@ -512,7 +728,7 @@ export default function TextEditor({ children }: TextEditorProps) {
         doc?.addEventListener('mouseup', () => setIsDragging(false));
 
         return () => {
-            debouncedChange.current.cancel();
+            debouncedChange.cancel();
             setAppliedFormats(new Set());
             setEditing(false);
 
@@ -520,7 +736,7 @@ export default function TextEditor({ children }: TextEditorProps) {
             $el.trigger("blur");
             $el.off("dblclick", eventOnDoubleClick as any);
             $el.off('paste', eventOnPaste as any);
-            $el.off("input", debouncedChange.current);
+            $el.off("input", debouncedChange);
 
             doc?.removeEventListener('selectionchange', handleSelectionChange);
             doc?.removeEventListener('mousedown', () => setIsDragging(true));
