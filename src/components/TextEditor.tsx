@@ -1,306 +1,602 @@
 import { ClipboardEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useCanvas } from '../contexts/CanvasProvider';
 import { useSelected } from '../contexts/SelectedProvider';
-import { Box, IconButton, Stack } from '@mui/material';
+import { alpha, Box, IconButton, Stack, Tooltip } from '@mui/material';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getColor } from '../theme/colors';
-import { Bold, Brush, Italic, Underline } from 'lucide-react';
+import { Bold, Brush, Italic, RemoveFormatting, Strikethrough, Underline } from 'lucide-react';
 import { useTypeOf } from '../contexts/TypesProvider';
-import { useNodeComponent, useNodeComponents } from '../contexts/NodesProvider';
-import { nanoid } from 'nanoid';
+import { useNodeComponent } from '../contexts/NodesProvider';
 import { useComponentsParser, useComponentsManager } from '../contexts/ComponentsProvider';
-import { TextRectOverlay } from './TextRectOverlay';
-import { IRect } from '../type';
+import { debounce } from 'lodash';
 
-const ALLOWED_TAG = [
-    "a",
-    "abbr",
-    "b",
-    "bdi",
-    "bdo",
-    "br",
-    "cite",
-    "code",
-    "data",
-    "dfn",
-    "em",
-    "i",
-    "img",
-    "kbd",
-    "mark",
-    "q",
-    "ruby",
-    "s",
-    "samp",
-    "small",
-    "span",
-    "strong",
-    "sub",
-    "sup",
-    "time",
-    "u",
-    "var",
-    "wbr"
-];
+// Constants
+const ALLOWED_TAGS = new Set([
+    "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn",
+    "em", "i", "img", "kbd", "mark", "q", "ruby", "s", "samp", "small",
+    "span", "strong", "sub", "sup", "time", "u", "var", "wbr"
+]);
 
+const FORMAT_TAGS = {
+    bold: ['b', 'strong'],
+    italic: ['i', 'em'],
+    underline: ['u'],
+    strike: ['s', 'strike']
+};
 
-export interface TextEditorProps {
+const FORMAT_ACTIONS = {
+    bold: { tag: 'b', icon: <Bold size={14} /> },
+    italic: { tag: 'i', icon: <Italic size={14} /> },
+    underline: { tag: 'u', icon: <Underline size={14} /> },
+    strike: { tag: 's', icon: <Strikethrough size={14} /> }
+};
+
+interface TextEditorProps {
     children?: ReactNode;
 }
-export default function TextEditor({ children }: TextEditorProps) {
 
-    const parser = useComponentsParser((node) => {
-        if (ALLOWED_TAG.includes(node.tagName.toLowerCase())) {
-            return {
-                type: 'text',
-            }
-        }
-        return {
-            type: 'textnode',
-        }
-    });
-    const elRef = useRef<HTMLDivElement>(null);
+export default function TextEditor({ children }: TextEditorProps) {
+    // Context hooks
+    const parser = useComponentsParser((node) => ({
+        type: ALLOWED_TAGS.has(node.tagName.toLowerCase()) ? 'text' : 'textnode'
+    }));
     const { updateById } = useComponentsManager();
     const canvas = useCanvas();
     const selected = useSelected();
     const id = useMemo(() => selected?.[0]?.id, [selected]);
     const node = useNodeComponent(id);
     const isText = useTypeOf(selected, 'text');
+
+    // State
     const [editing, setEditing] = useState(false);
-    const shouldVisible = editing && isText && selected.length == 1;
-
-    const [rects, setRects] = useState<IRect[]>([]);
     const [caret, setCaret] = useState({ x: 0, y: 0 });
-    const x = caret.x - 115;
-    const y = caret.y - 30;
+    const [appliedFormats, setAppliedFormats] = useState<Set<string>>(new Set());
+    const [isDragging, setIsDragging] = useState(false);
 
-    function getTextRects(el: HTMLElement): IRect[] {
-        const range = document.createRange();
+    // Refs
+    const elRef = useRef<HTMLDivElement>(null);
+    const debouncedChange = useRef(debounce(() => {
+        const content = node?.$el?.html();
+        if (content && node?.component) {
+            updateById(id, { components: [{ type: "textnode", content }] });
+        }
+    }, 300));
 
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
-            acceptNode: (node) => node.nodeValue?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT,
-        });
+    // Derived values
+    const shouldVisible = editing && isText && selected.length === 1;
+    const x = caret.x - 165;
+    const y = caret.y -85;
 
-        const rects: IRect[] = [];
+    // Utility functions
+    const normalizeRangeBoundaries = (range: Range) => {
+        const { startContainer, startOffset, endContainer, endOffset } = range;
 
-        while (walker.nextNode()) {
-            const textNode = walker.currentNode;
-            if (!textNode) continue;
-
-            range.selectNodeContents(textNode);
-            const nodeRects: IRect[] = Array.from(range.getClientRects()).map(e => ({ x: e.x, y: e.y, width: e.width, height: e.height }));
-            rects.push(...nodeRects);
+        if (startContainer.nodeType === Node.TEXT_NODE && startOffset > 0) {
+            (startContainer as Text).splitText(startOffset);
+            range.setStart(startContainer, startOffset);
         }
 
-        return rects;
-    }
+        if (endContainer.nodeType === Node.TEXT_NODE &&
+            endOffset < (endContainer.nodeValue?.length || 0)) {
+            (endContainer as Text).splitText(endOffset);
+            range.setEnd(endContainer, endOffset);
+        }
+    };
 
-    function safeWrapSelection(tagName: string): HTMLElement | null {
+    const getSelectionContext = () => {
         if (!canvas.window || !canvas.document) return null;
 
         const selection = canvas.window.getSelection();
         if (!selection || selection.rangeCount === 0) return null;
 
         const range = selection.getRangeAt(0);
-        if (range.collapsed) return null;
+        return { selection, range, doc: canvas.document, win: canvas.window };
+    };
 
+    const wrapSelection = (tagName: string) => {
+        const ctx = getSelectionContext();
+        if (!ctx) return;
+
+        const { selection, range, doc } = ctx;
+
+        if (range.collapsed) {
+            return wrapCurrentWord(tagName, ctx);
+        }
+
+        // Check for existing wrapper
+        let wrapper = findParentWithTag(range.commonAncestorContainer, tagName, doc);
+
+        // Extract and normalize content
         const contents = range.extractContents();
-        const wrapper = canvas.document.createElement(tagName);
+        removeEmptyNodes(contents);
 
-        wrapper.appendChild(contents);
-        range.insertNode(wrapper);
-        selection.removeAllRanges();
+        if (wrapper) {
+            // Merge into existing wrapper
+            wrapper.appendChild(contents);
+            setSelectionAfter(wrapper, selection, doc);
+        } else {
+            // Create new wrapper
+            wrapper = doc.createElement(tagName);
+            wrapper.appendChild(contents);
+            range.insertNode(wrapper);
+            setSelectionAfter(wrapper, selection, doc);
+        }
 
-        eventOnChange();
+        updateFormats();
+        debouncedChange.current();
+    };
 
+    const unwrapSelection = (tagName: string) => {
+        const ctx = getSelectionContext();
+        if (!ctx) return;
+
+        const { selection, range, doc } = ctx;
+
+        if (range.collapsed) {
+            unwrapAtCaret(tagName, ctx);
+        } else {
+            unwrapRange(tagName, ctx);
+        }
+
+        updateFormats();
+        debouncedChange.current();
+    };
+
+    const wrapCurrentWord = (tagName: string, { selection, range, doc }: any) => {
+        const textNode = range.startContainer;
+        if (textNode.nodeType !== Node.TEXT_NODE) return null;
+
+        const text = textNode.textContent || '';
+        const offset = range.startOffset;
+        const wordRegex = /[\w\u00C0-\u024F]+/; // Supports accented characters
+
+        // Find word boundaries
+        let start = offset;
+        while (start > 0 && wordRegex.test(text[start - 1])) start--;
+
+        let end = offset;
+        while (end < text.length && wordRegex.test(text[end])) end++;
+
+        if (start >= end) return null;
+
+        // Create range for the word
+        const wordRange = doc.createRange();
+        wordRange.setStart(textNode, start);
+        wordRange.setEnd(textNode, end);
+
+        // Wrap the word
+        const wrapper = doc.createElement(tagName);
+        wrapper.appendChild(wordRange.extractContents());
+        wordRange.insertNode(wrapper);
+
+        // Set selection after wrapper
+        setSelectionAfter(wrapper, selection, doc);
         return wrapper;
-    }
+    };
 
+    const unwrapAtCaret = (tagName: string, { selection, doc }: any) => {
+        const anchorNode = selection.anchorNode;
+        if (!anchorNode) return;
 
-    const handleBold = () => safeWrapSelection('b');
-    const handleItalic = () => safeWrapSelection('i');
-    const handleUnderline = () => safeWrapSelection('u');
-    const handleBrush = () => safeWrapSelection('span');
+        const wrapper = findParentWithTag(anchorNode, tagName, doc);
+        if (!wrapper) return;
 
+        // Insert caret marker
+        const marker = createCaretMarker(doc);
+        selection.getRangeAt(0).insertNode(marker);
 
+        // Unwrap
+        unwrapElement(wrapper);
+
+        // Restore caret
+        restoreCaretFromMarker(marker, selection, doc);
+    };
+
+    const unwrapRange = (tagName: string, { selection, range, doc }: any) => {
+        const fragment = range.extractContents();
+        const wrappers = fragment.querySelectorAll(tagName);
+
+        wrappers.forEach((wrapper: Element) => {
+            unwrapElement(wrapper);
+        });
+
+        range.insertNode(fragment);
+        selection.selectAllChildren(fragment);
+    };
+
+    const findParentWithTag = (node: Node, tagName: string, doc: Document) => {
+        let current: Node | null = node;
+        const tags = FORMAT_TAGS[tagName as keyof typeof FORMAT_TAGS] || [tagName];
+
+        while (current && current !== doc.body) {
+            if (current.nodeType === Node.ELEMENT_NODE) {
+                const tag = (current as Element).tagName.toLowerCase();
+                if (tags.includes(tag)) return current as HTMLElement;
+            }
+            current = current.parentNode;
+        }
+        return null;
+    };
+
+    const unwrapElement = (element: Element) => {
+        const parent = element.parentNode;
+        if (!parent) return;
+
+        while (element.firstChild) {
+            parent.insertBefore(element.firstChild, element);
+        }
+        parent.removeChild(element);
+    };
+
+    const createCaretMarker = (doc: Document) => {
+        const marker = doc.createElement('span');
+        marker.id = '__caret_marker__';
+        marker.style.cssText = 'display:inline-block;width:0;height:0;overflow:hidden;';
+        return marker;
+    };
+
+    const restoreCaretFromMarker = (marker: HTMLElement, selection: Selection, doc: Document) => {
+        if (!marker.parentNode) return;
+
+        const index = Array.from(marker.parentNode.childNodes).indexOf(marker);
+        const range = doc.createRange();
+        range.setStart(marker.parentNode, index);
+        range.collapse(true);
+
+        selection.removeAllRanges();
+        selection.addRange(range);
+        marker.remove();
+    };
+
+    const setSelectionAfter = (node: Node, selection: Selection, doc: Document) => {
+        const range = doc.createRange();
+        range.setStartAfter(node);
+        range.collapse(true);
+
+        selection.removeAllRanges();
+        selection.addRange(range);
+    };
+
+    const removeEmptyNodes = (root: Node) => {
+        const walker = document.createTreeWalker(
+            root,
+            NodeFilter.SHOW_ELEMENT,
+            {
+                acceptNode: (node) =>
+                    node.childNodes.length === 0 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP
+            }
+        );
+
+        let emptyNode;
+        while (emptyNode = walker.nextNode()) {
+            emptyNode.parentNode?.removeChild(emptyNode);
+        }
+    };
+
+    // Formatting handlers
+    const toggleFormat = (format: string) => {
+        const isApplied = appliedFormats.has(format);
+        const action = FORMAT_ACTIONS[format as keyof typeof FORMAT_ACTIONS];
+
+        if (isApplied) {
+            unwrapSelection(action.tag);
+        } else {
+            wrapSelection(action.tag);
+        }
+    };
+
+    const handleRemoveFormatting = () => {
+        const ctx = getSelectionContext();
+        if (!ctx) return;
+
+        const { selection, range, doc } = ctx;
+        if (range.collapsed) return;
+
+        // Create markers
+        const startMarker = createCaretMarker(doc);
+        const endMarker = createCaretMarker(doc);
+        range.insertNode(endMarker);
+        range.cloneRange().insertNode(startMarker);
+
+        // Process content between markers
+        const contentRange = doc.createRange();
+        contentRange.setStartAfter(startMarker);
+        contentRange.setEndBefore(endMarker);
+
+        const fragment = contentRange.extractContents();
+        const cleaned = cleanFormatting(fragment, doc);
+        contentRange.insertNode(cleaned);
+
+        // Restore selection
+        restoreSelectionBetweenMarkers(startMarker, endMarker, selection, doc);
+
+        updateFormats();
+        debouncedChange.current();
+    };
+
+    const cleanFormatting = (fragment: DocumentFragment, doc: Document) => {
+        const cleaned = doc.createDocumentFragment();
+        const walker = doc.createTreeWalker(
+            fragment,
+            NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT
+        );
+
+        let node;
+        while (node = walker.nextNode()) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                cleaned.appendChild(node.cloneNode());
+            } else if ((node as Element).tagName.toLowerCase() === 'br') {
+                cleaned.appendChild(node.cloneNode());
+            } else {
+                // For elements, just process their children
+                const childWalker = doc.createTreeWalker(
+                    node,
+                    NodeFilter.SHOW_TEXT
+                );
+
+                let child;
+                while (child = childWalker.nextNode()) {
+                    cleaned.appendChild(child.cloneNode());
+                }
+            }
+        }
+
+        return cleaned;
+    };
+
+    const restoreSelectionBetweenMarkers = (
+        start: HTMLElement,
+        end: HTMLElement,
+        selection: Selection,
+        doc: Document
+    ) => {
+        if (!start.parentNode || !end.parentNode) return;
+
+        const range = doc.createRange();
+        range.setStartAfter(start);
+        range.setEndBefore(end);
+
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        start.remove();
+        end.remove();
+    };
+
+    // Event handlers
     const eventOnChange = () => {
-        const $el = node?.$el;
-        if (!$el) return;
-        updateTextRects();
-        const content = $el.html();
-        if (node.component) {
+        const content = node?.$el?.html();
+        if (content && node?.component) {
             updateById(id, { components: [{ type: "textnode", content }] });
         }
-    }
+    };
 
     const eventOnDoubleClick = (e: MouseEvent) => {
         const $el = node?.$el;
-
-        console.log(e);
         if (!$el) return;
 
         $el.attr("contenteditable", 'true');
         setEditing(true);
-        updateTextRects();
-        // Give the DOM a tick to set contenteditable
+
+        // Focus and set caret position
         setTimeout(() => {
-            if (!canvas.window || !canvas.document || !$el) return;
+            if (!canvas.window || !canvas.document) return;
 
-            // Clear existing selection
             const selection = canvas.window.getSelection();
-            if (!selection) return;
-            selection.removeAllRanges();
+            selection?.removeAllRanges();
 
-            // Get caret position from mouse click
-            const range = canvas.document.caretRangeFromPoint
-                ? canvas.document.caretRangeFromPoint(e.clientX, e.clientY)
-                : canvas.document.caretPositionFromPoint
-                    ? (() => {
-                        const pos = canvas.document.caretPositionFromPoint(e.clientX, e.clientY);
-                        const r = canvas.document.createRange();
-                        if (pos?.offsetNode) {
-                            r.setStart(pos.offsetNode, pos.offset);
-                            r.collapse(true);
-                            return r;
-                        }
-                        return null;
-                    })()
-                    : null;
-
+            const range = getRangeFromPoint(e.clientX, e.clientY, canvas.document);
             if (range) {
-                selection.addRange(range);
+                selection?.addRange(range);
             }
         }, 0);
-    }
+    };
+
+    const getRangeFromPoint = (x: number, y: number, doc: Document) => {
+        if (doc.caretRangeFromPoint) {
+            return doc.caretRangeFromPoint(x, y);
+        }
+
+        if (doc.caretPositionFromPoint) {
+            const pos = doc.caretPositionFromPoint(x, y);
+            if (pos?.offsetNode) {
+                const range = doc.createRange();
+                range.setStart(pos.offsetNode, pos.offset);
+                range.collapse(true);
+                return range;
+            }
+        }
+
+        return null;
+    };
 
     const eventOnPaste = (e: any) => {
-
         e.preventDefault();
         const $el = node?.$el;
         if (!$el) return;
 
-        const event = e.originalEvent as ClipboardEvent
-        const html = event.clipboardData?.getData('text/html') || event.clipboardData?.getData('text/plain');
-        if (!html) return;
+        const event = e.originalEvent as ClipboardEvent;
+        const text = event.clipboardData?.getData('text/plain') || '';
 
-        node?.append(parser(html));
-    }
+        // Sanitize pasted content
+        const sanitized = document.createElement('div');
+        sanitized.textContent = text;
 
-    const updateTextRects = () => {
-        const $el = node?.$el;
-        if (!$el) return;
-        setRects(getTextRects($el[0]));
-    }
+        $el.append(sanitized.innerHTML);
+        debouncedChange.current();
+    };
 
+    const updateFormats = () => {
+        const ctx = getSelectionContext();
+        if (!ctx) return;
 
+        const { selection, doc } = ctx;
+        const anchorNode = selection?.anchorNode;
+        if (!anchorNode) return;
 
+        const formats = new Set<string>();
+        let current: Node | null = anchorNode;
+        const el = node?.$el?.[0];
+
+        while (current && current !== el) {
+            if (current.nodeType === Node.ELEMENT_NODE) {
+                const element = current as HTMLElement;
+                const tag = element.tagName.toLowerCase();
+
+                // Check tag-based formatting
+                for (const [format, tags] of Object.entries(FORMAT_TAGS)) {
+                    if (tags.includes(tag)) {
+                        formats.add(format);
+                    }
+                }
+
+                // Check style-based formatting
+                const style = getComputedStyle(element);
+                if (style.fontWeight === 'bold' || parseInt(style.fontWeight) >= 600) {
+                    formats.add('bold');
+                }
+                if (style.fontStyle === 'italic') {
+                    formats.add('italic');
+                }
+                if (style.textDecoration.includes('underline')) {
+                    formats.add('underline');
+                }
+                if (style.textDecoration.includes('line-through')) {
+                    formats.add('strike');
+                }
+            }
+
+            current = current.parentNode;
+        }
+
+        setAppliedFormats(formats);
+    };
+
+    const updateCaretPosition = () => {
+        if (!canvas.window || !canvas.frame) return;
+
+        const selection = canvas.window.getSelection();
+        if (!selection || selection.rangeCount === 0) return;
+
+        const range = selection.getRangeAt(0);
+        const rects = range.getClientRects();
+        if (rects.length === 0) return;
+
+        const firstRect = rects[0];
+        const iframeRect = canvas.frame.getBoundingClientRect();
+
+        setCaret({
+            x: iframeRect.left + firstRect.left,
+            y: iframeRect.top + firstRect.top
+        });
+    };
+
+    const handleSelectionChange = () => {
+        if (isDragging) return;
+        updateCaretPosition();
+        updateFormats();
+    };
+
+    // Effects
     useEffect(() => {
-
         const $el = node?.$el;
         if (!$el || !isText) return;
 
         $el.on("dblclick", eventOnDoubleClick as any);
-        $el.on("input", eventOnChange as any);
+        $el.on("input", debouncedChange.current);
         $el.on('paste', eventOnPaste as any);
 
+        const doc = canvas.document;
+        doc?.addEventListener('selectionchange', handleSelectionChange);
+        doc?.addEventListener('mousedown', () => setIsDragging(true));
+        doc?.addEventListener('mouseup', () => setIsDragging(false));
+
         return () => {
+            debouncedChange.current.cancel();
+            setAppliedFormats(new Set());
             setEditing(false);
+
             $el.removeAttr("contenteditable");
             $el.trigger("blur");
             $el.off("dblclick", eventOnDoubleClick as any);
             $el.off('paste', eventOnPaste as any);
-            $el.off("input", eventOnChange as any);
+            $el.off("input", debouncedChange.current);
 
-        }
+            doc?.removeEventListener('selectionchange', handleSelectionChange);
+            doc?.removeEventListener('mousedown', () => setIsDragging(true));
+            doc?.removeEventListener('mouseup', () => setIsDragging(false));
+        };
     }, [node?.component?.id, isText]);
-
 
     useEffect(() => {
         if (!canvas.window || !canvas.frame || !canvas.document) return;
+        updateCaretPosition();
+        updateFormats();
+    }, [canvas.window, canvas.frame, canvas.document]);
 
-        const selectionChange = () => {
-            if (!canvas.window || !canvas.frame) return;
-
-            const selection = canvas.window.getSelection();
-            if (!selection || selection.rangeCount === 0) return;
-
-            const range = selection.getRangeAt(0);
-            const rects = range.getClientRects();
-
-            if (rects.length === 0) return;
-
-            const firstRect = rects[0]; // posisi awal dari seleksi
-            const iframeRect = canvas.frame.getBoundingClientRect();
-
-            const x = iframeRect.left + firstRect.left;
-            const y = iframeRect.top + firstRect.top;
-
-            setCaret({ x, y });
-        };
-
-
-        selectionChange();
-        updateTextRects();
-
-        canvas.document.addEventListener('selectionchange', selectionChange);
-        return () => {
-            canvas.document?.removeEventListener('selectionchange', selectionChange);
-        }
-    }, [canvas.window, canvas.rect]);
-
-
+    // Render
     return (
-        <>
-            <AnimatePresence mode='sync'>
-                {shouldVisible && (
-                    <motion.div
-                        key={id}
-                        ref={elRef}
-                        initial={{
-                            top: y + 'px',
-                            left: x + 'px',
-                            opacity: 0,
-                            scale: 0.5
-                        }}
-                        animate={{
-                            top: y + 'px',
-                            left: x + 'px',
-                            opacity: 1,
-                            scale: 1
-                        }}
-                        exit={{
-                            top: y + 'px',
-                            left: x + 'px',
-                            opacity: 0,
-                            scale: 0.5
-                        }}
-                        style={{
-                            position: 'fixed',
-                            background: getColor('primary')[400],
-                            width: '104px',
-                            height: '25px',
-                            borderRadius: '4px',
-                            zIndex: 999
-                        }}>
+        <AnimatePresence mode='sync'>
+            {shouldVisible && (
+                <motion.div
+                    key={selected.map(e => e.id).join(',')}
+                    ref={elRef}
+                    initial={{ opacity: 0, scale: 0.5, x, y }}
+                    animate={{ opacity: 1, scale: 1, x, y }}
+                    exit={{ opacity: 0, scale: 0.5, x, y }}
+                    style={{
+                        position: 'fixed',
+                        background: getColor('primary')[300],
+                        height: '30px',
+                        borderRadius: '6px',
+                        zIndex: 999,
+                        overflow: 'hidden',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                    }}
+                >
+                    <Stack direction="row" spacing={0} alignItems="center">
+                        {Object.entries(FORMAT_ACTIONS).map(([format, { icon }]) => (
+                            <Tooltip key={format} title={format.charAt(0).toUpperCase() + format.slice(1)}>
+                                <IconButton
+                                    sx={{
+                                        opacity: appliedFormats.has(format) ? 1 : 0.7,
+                                        background: appliedFormats.has(format)
+                                            ? alpha(getColor('primary')[800], 0.2)
+                                            : 'transparent',
+                                        borderRadius: 0,
+                                        width: 32,
+                                        height: 30,
+                                        '&:hover': {
+                                            background: alpha(getColor('primary')[800], 0.1)
+                                        }
+                                    }}
+                                    size="small"
+                                    onClick={() => toggleFormat(format)}
+                                >
+                                    {icon}
+                                </IconButton>
+                            </Tooltip>
+                        ))}
 
-                        <Stack direction={"row"} spacing={0.2} alignItems={"center"}>
-                            <IconButton size='small' onClick={handleBold}>
-                                <Bold size={12} />
+                        <Tooltip title="Remove formatting">
+                            <IconButton
+                                sx={{
+                                    borderRadius: 0,
+                                    width: 32,
+                                    height: 30,
+                                    '&:hover': {
+                                        background: alpha(getColor('primary')[800], 0.1)
+                                    }
+                                }}
+                                size="small"
+                                onClick={handleRemoveFormatting}
+                            >
+                                <RemoveFormatting size={14} />
                             </IconButton>
-                            <IconButton size='small' onClick={handleItalic}>
-                                <Italic size={12} />
-                            </IconButton>
-                            <IconButton size='small' onClick={handleUnderline}>
-                                <Underline size={12} />
-                            </IconButton>
-                            <IconButton size='small' onClick={handleBrush}>
-                                <Brush size={12} />
-                            </IconButton>
-                        </Stack>
-
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </>
+                        </Tooltip>
+                    </Stack>
+                </motion.div>
+            )}
+        </AnimatePresence>
     );
 }

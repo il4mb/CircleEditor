@@ -87,7 +87,8 @@ export const OverlayProvider = ({ children }: OverlayProviderProps) => {
                 left: canvas.rect.x + 'px',
                 width: canvas.rect.width + 'px',
                 height: canvas.rect.height + 'px',
-                pointerEvents: 'none'
+                pointerEvents: 'none',
+                overflow:'hidden'
             }}>
                 {rect && (
                     <motion.div
